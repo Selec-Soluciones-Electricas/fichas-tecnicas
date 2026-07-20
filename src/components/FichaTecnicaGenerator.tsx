@@ -33,6 +33,9 @@ export default function FichaTecnicaGenerator() {
     { k: "", v: "", img: null },
     { k: "", v: "", img: null },
   ]);
+  const [lastPdfText, setLastPdfText] = useState("");
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [aiNotice, setAiNotice] = useState("");
 
   const fecha = useMemo(() => {
     const d = new Date();
@@ -174,21 +177,197 @@ export default function FichaTecnicaGenerator() {
     r.readAsText(f);
   };
 
+  const cleanPdfLine = (line: string) => {
+    let normalized = line.replace(/\u00A0/g, " ").replace(/\s+/g, " ").trim();
+    normalized = normalized.replace(/^[•·▪*-]\s*/, "");
+    normalized = normalized.replace(/^(p[áa]gina|page)\s*\d+$/i, "");
+    return normalized;
+  };
+
+  const extractCoreFieldsFromText = (text: string) => {
+    const normalizedText = text.replace(/\s+/g, " ").trim();
+    const lines = text
+      .split(/\r?\n/)
+      .map(cleanPdfLine)
+      .filter((line) => !isNoiseLine(line));
+
+    const findValueFromText = (regex: RegExp) => {
+      const match = normalizedText.match(regex);
+      return match?.[1]?.trim() || "";
+    };
+
+    const marca = findValueFromText(/\b(?:marca|fabricante|brand)\b[^A-Za-zÁÉÍÓÚÑáéíóúñ0-9]{0,6}([A-Za-zÁÉÍÓÚÑáéíóúñ0-9/._-]{1,60})/i) ||
+      extractFieldValueFromLines(lines, [/^marca\b/i, /^fabricante\b/i, /^brand\b/i]);
+
+    const modelo = findValueFromText(/\b(?:modelo|referencia|part\s*number|código|codigo)\b[^A-Za-zÁÉÍÓÚÑáéíóúñ0-9]{0,6}([A-Za-zÁÉÍÓÚÑáéíóúñ0-9/._-]{1,60})/i) ||
+      extractFieldValueFromLines(lines, [/^modelo\b/i, /^referencia\b/i, /^part\s*number\b/i, /^c[oó]digo\b/i, /^codigo\b/i]);
+
+    const docCode = normalizedText.match(/\b(FT[-\s]?\d+)\b/i)?.[1]?.toUpperCase().replace(/\s+/g, "-") ||
+      extractCodeValueFromLines(lines);
+
+    const title = pickBestCandidate(
+      lines.filter((line) => line.length > 8 && !/^(marca|modelo|fabricante|referencia|código|codigo|descripción|descripcion|características|caracteristicas|notas|observaciones|ficha|selec|www\.|@)/i.test(line)),
+      scoreTitleCandidate
+    ) || lines.find((line) => line.length > 12) || "";
+
+    const desc = lines
+      .filter((line) => line.length > 12 && !/^(marca|modelo|fabricante|referencia|código|codigo|descripción|descripcion|características|caracteristicas|notas|observaciones|ficha|selec|www\.|@)/i.test(line))
+      .slice(0, 6)
+      .join(" ") ||
+      lines.find((line) => line.length > 20) || "";
+
+    const contacto = normalizedText.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/)?.[0] ||
+      normalizedText.match(/\b(?:selec\.cl|www\.selec\.cl)\b/i)?.[0] || "";
+
+    return {
+      titulo: title,
+      marca,
+      modelo: modelo || docCode,
+      docCode,
+      desc,
+      contacto,
+    };
+  };
+
+  const isNoiseLine = (line: string) => {
+    const normalized = line.toLowerCase();
+    return (
+      !normalized ||
+      /^(p[áa]gina|page)\s*\d+$/i.test(normalized) ||
+      /^(ficha\s*t[eé]cnica|características técnicas|caracteristicas tecnicas|descripción|descripcion|notas|observaciones|observación)$/i.test(normalized)
+    );
+  };
+
+  const findBestLine = (lines: string[], predicate: (line: string) => boolean) =>
+    lines.find((line) => predicate(line)) || "";
+
+  const extractFieldValue = (line: string, regex: RegExp) => {
+    const match = line.match(regex);
+    if (!match) return "";
+    const value = (match[1] ?? line.replace(regex, "")).trim();
+    return value.replace(/^[:\-–—]\s*/, "").trim();
+  };
+
+  const scoreTitleCandidate = (line: string, index: number, total: number) => {
+    const normalized = line.toLowerCase();
+    let score = 0;
+
+    if (line.length >= 10) score += 3;
+    if (line.length >= 25) score += 3;
+    if (index <= 4) score += 3;
+    if (index <= Math.max(0, total - 2)) score += 1;
+    if (!/[.:;]/.test(line)) score += 2;
+    if (!/\b(marca|modelo|fabricante|referencia|código|codigo|descripción|descripcion|características|caracteristicas|notas|observaciones|ficha|empresa|selec|www\.|@)\b/i.test(normalized)) score += 4;
+    if (/^[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ0-9\s/\-]+$/.test(line)) score += 2;
+    if (/\d/.test(line)) score -= 2;
+
+    return score;
+  };
+
+  const pickBestCandidate = (lines: string[], scorer: (line: string, index: number, total: number) => number) => {
+    const scored = lines
+      .map((line, index) => ({ line, score: scorer(line, index, lines.length) }))
+      .filter((item) => item.line.length > 3 && item.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    return scored[0]?.line || "";
+  };
+
+  const isValueLike = (line: string) => {
+    const normalized = line.trim();
+    if (!normalized) return false;
+    if (/^(marca|modelo|código|codigo|referencia|descripción|descripcion|características|caracteristicas|notas|observaciones|ficha técnica|selec|www\.|@)/i.test(normalized)) return false;
+    if (normalized.length > 120) return false;
+    return !/[;:]{2,}/.test(normalized);
+  };
+
+  const extractFieldValueFromLines = (lines: string[], labelPatterns: RegExp[]) => {
+    const candidates: Array<{ value: string; score: number }> = [];
+
+    lines.forEach((line, index) => {
+      const normalized = cleanPdfLine(line);
+      if (!normalized) return;
+
+      const labelMatch = labelPatterns.find((pattern) => pattern.test(normalized));
+      if (!labelMatch) return;
+
+      const valueFromInline = normalized
+        .replace(labelMatch, "")
+        .replace(/^[:\-–—\s]+/, "")
+        .trim();
+
+      if (valueFromInline && isValueLike(valueFromInline)) {
+        candidates.push({ value: valueFromInline, score: 18 + (index <= 8 ? 4 : 0) });
+      }
+
+      if (normalized.match(labelMatch) && index + 1 < lines.length) {
+        const nextLine = cleanPdfLine(lines[index + 1]);
+        if (nextLine && isValueLike(nextLine) && nextLine.length < 80) {
+          candidates.push({ value: nextLine, score: 22 + (index <= 8 ? 4 : 0) });
+        }
+      }
+    });
+
+    const ranked = candidates.sort((a, b) => b.score - a.score);
+    return ranked[0]?.value || "";
+  };
+
+  const extractCodeValueFromLines = (lines: string[]) => {
+    const candidates: Array<{ value: string; score: number }> = [];
+    lines.forEach((line, index) => {
+      const normalized = cleanPdfLine(line);
+      if (!normalized) return;
+
+      const directMatch = normalized.match(/\b(FT[-\s]?\d+)\b/i);
+      if (directMatch) {
+        candidates.push({ value: directMatch[1].toUpperCase().replace(/\s+/g, "-"), score: 20 + (index <= 6 ? 4 : 0) });
+      }
+
+      const codeLabelMatch = normalized.match(/^(?:c[oó]digo|codigo|ref(?:erencia)?|n[°º]?)\b[^\w]*(.*)$/i);
+      if (codeLabelMatch?.[2]) {
+        const value = codeLabelMatch[2].trim().replace(/^[:\-–—\s]+/, "");
+        if (value && isValueLike(value)) {
+          candidates.push({ value, score: 16 + (index <= 6 ? 3 : 0) });
+        }
+      }
+
+      if (index + 1 < lines.length) {
+        const nextLine = cleanPdfLine(lines[index + 1]);
+        const looksLikeCode = /^(ft[-\s]?\d+|[A-Z0-9._/-]{2,})$/i.test(nextLine);
+        if (codeLabelMatch && nextLine && looksLikeCode) {
+          candidates.push({ value: nextLine, score: 22 });
+        }
+      }
+    });
+
+    const ranked = candidates.sort((a, b) => b.score - a.score);
+    return ranked[0]?.value || "";
+  };
+
   const extractSpecLine = (line: string): Spec | null => {
-    const normalized = line.replace(/\u00A0/g, " ").trim();
-    const sep = normalized.match(/[:–—-]/);
-    if (sep) {
-      const [key, ...rest] = normalized.split(sep[0]);
-      return { k: key.trim(), v: rest.join(sep[0]).trim(), img: null };
+    const normalized = cleanPdfLine(line);
+    if (!normalized || normalized.length < 3) return null;
+
+    const labelValueMatch = normalized.match(/^([^:–—-]{1,60})\s*[:–—-]\s*(.+)$/);
+    if (labelValueMatch) {
+      const key = labelValueMatch[1].trim();
+      const value = labelValueMatch[2].trim();
+      if (key && value && !/^(marca|modelo|código|codigo|descripción|descripcion|notas|observaciones)$/i.test(key)) {
+        return { k: key, v: value, img: null };
+      }
     }
+
     const parts = normalized.split(/\s{2,}/).map((item) => item.trim()).filter(Boolean);
     if (parts.length >= 2) {
-      return { k: parts[0], v: parts.slice(1).join(" "), img: null };
+      const [key, ...rest] = parts;
+      return { k: key, v: rest.join(" "), img: null };
     }
+
     const words = normalized.split(/\s+/);
     if (words.length > 2) {
       return { k: words.slice(0, -1).join(" "), v: words.at(-1) ?? "", img: null };
     }
+
     return null;
   };
 
@@ -197,80 +376,184 @@ export default function FichaTecnicaGenerator() {
     pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
     const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
 
-    const pages: string[] = [];
+    const pageLines: string[] = [];
     for (let i = 1; i <= doc.numPages; i += 1) {
       const page = await doc.getPage(i);
       const content = await page.getTextContent();
-      const pageText = content.items.map((item: any) => item.str || "").join("\n");
-      pages.push(pageText);
+      const items = (content.items ?? [])
+        .filter((item: any) => typeof item.str === "string" && item.str.trim())
+        .map((item: any) => ({
+          str: item.str.trim(),
+          x: item.transform?.[4] ?? 0,
+          y: item.transform?.[5] ?? 0,
+        }));
+
+      const grouped = new Map<number, Array<{ str: string; x: number }>>();
+      items.forEach((item: { str: string; x: number; y: number }) => {
+        const key = Math.round(item.y / 4) * 4;
+        const bucket = grouped.get(key) ?? [];
+        bucket.push(item);
+        grouped.set(key, bucket);
+      });
+
+      const pageText = Array.from(grouped.entries())
+        .sort((a, b) => b[0] - a[0])
+        .map(([, bucket]) =>
+          bucket
+            .sort((a, b) => a.x - b.x)
+            .map((entry) => entry.str)
+            .join(" ")
+        )
+        .filter(Boolean);
+
+      pageLines.push(...pageText);
     }
 
-    return pages.join("\n");
+    return pageLines.join("\n");
+  };
+
+  const extractWithAi = async (
+    sourceText = lastPdfText,
+    baseData?: Partial<{
+      empresa: string;
+      titulo: string;
+      marca: string;
+      modelo: string;
+      docCode: string;
+      desc: string;
+      notas: string;
+      contacto: string;
+      specs: Spec[];
+      logo: string | null;
+      photos: string[];
+    }>
+  ) => {
+    const text = sourceText?.trim();
+    if (!text) return;
+
+    const currentData = {
+      empresa: baseData?.empresa ?? empresa,
+      titulo: baseData?.titulo ?? titulo,
+      marca: baseData?.marca ?? marca,
+      modelo: baseData?.modelo ?? modelo,
+      docCode: baseData?.docCode ?? docCode,
+      desc: baseData?.desc ?? desc,
+      notas: baseData?.notas ?? notas,
+      contacto: baseData?.contacto ?? contacto,
+      specs: baseData?.specs ?? specs,
+      logo: baseData?.logo ?? logo,
+      photos: baseData?.photos ?? photos,
+    };
+
+    setIsAiLoading(true);
+    setAiNotice("Analizando el PDF y completando los datos...");
+
+    try {
+      const response = await fetch("/api/ai-extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, currentData }),
+      });
+
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || "No se pudo analizar el PDF con IA.");
+      }
+
+      const nextData = {
+        empresa: payload.empresa || currentData.empresa || EMPRESA_DEFAULT,
+        titulo: payload.titulo || currentData.titulo || "",
+        marca: payload.marca || currentData.marca || "",
+        modelo: payload.modelo || currentData.modelo || "",
+        docCode: payload.docCode || currentData.docCode || "",
+        desc: payload.desc || currentData.desc || "",
+        notas: payload.notas || currentData.notas || "",
+        contacto: payload.contacto || currentData.contacto || CONTACTO_DEFAULT,
+        specs: Array.isArray(payload.specs) && payload.specs.length
+          ? payload.specs.map((s: { k?: string; v?: string; img?: string | null }) => ({ k: s.k || "", v: s.v || "", img: s.img || null }))
+          : currentData.specs,
+        logo: payload.logo ?? currentData.logo ?? defaultLogo.src,
+        photos: Array.isArray(payload.photos) ? payload.photos : currentData.photos,
+      };
+
+      applyFichaData(nextData);
+      setAiNotice("Datos completados automáticamente.");
+    } catch (error) {
+      console.warn(error);
+      setAiNotice("Se aplicó la extracción automática con los datos detectados.");
+    } finally {
+      setIsAiLoading(false);
+    }
   };
 
   const importPdfFile = async (f: File) => {
     try {
       const buffer = await readArrayBuffer(f);
       const rawText = await parsePdfText(buffer);
+      setLastPdfText(rawText);
       const lines = rawText
         .split(/\r?\n/)
-        .map((line) => line.replace(/\u00A0/g, " ").trim())
-        .filter(Boolean);
-
-      const findLabel = (regex: RegExp) => lines.find((line) => regex.test(line)) || "";
-      const extractLabel = (line: string, regex: RegExp) => line.replace(regex, "").trim();
+        .map(cleanPdfLine)
+        .filter((line) => !isNoiseLine(line));
 
       const titleMarker = lines.findIndex((line) => /ficha\s*t[eé]cnica/i.test(line));
-      const title = titleMarker >= 0
-        ? lines.slice(titleMarker + 1).find((line) => !/^(marca|modelo|ft|caracter[ií]sticas? t[eé]cnicas?|notas?)/i.test(line)) || ""
-        : lines.find((line) => line.length > 15) || "";
+      const titleCandidates = titleMarker >= 0
+        ? lines.slice(titleMarker + 1)
+        : lines;
+      const title = pickBestCandidate(
+        titleCandidates,
+        scoreTitleCandidate
+      ) || (titleMarker >= 0 ? lines[titleMarker + 1] || "" : "");
 
-      const marcaLine = findLabel(/marca\s*[:\-]/i);
-      const modeloLine = findLabel(/modelo\s*[:\-]/i);
-      const docCodeLine = findLabel(/ft[-\s]?\d+/i) || findLabel(/c[oó]digo.*documento/i);
-      const contactLine = findLabel(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/);
-      const websiteLine = findLabel(/\b(?:selec\.cl|www\.selec\.cl)\b/i);
-
-      const marca = marcaLine ? extractLabel(marcaLine, /.*marca\s*[:\-]?\s*/i) : "";
-      const modelo = modeloLine ? extractLabel(modeloLine, /.*modelo\s*[:\-]?\s*/i) : "";
-      const docCodeMatch = docCodeLine.match(/(FT[-\s]?\d+)/i);
-      const docCode = docCodeMatch ? docCodeMatch[1].toUpperCase().replace(/\s+/g, "-") : docCodeLine.trim();
-      const contactoPdf = [contactLine, websiteLine].filter(Boolean).join(" · ") || CONTACTO_DEFAULT;
+      const extractedFromText = extractCoreFieldsFromText(rawText);
+      const marca = extractedFromText.marca || extractFieldValueFromLines(lines, [/^marca\b/i, /^fabricante\b/i, /^brand\b/i]);
+      const modelo = extractedFromText.modelo || extractFieldValueFromLines(lines, [/^modelo\b/i, /^referencia\b/i, /^part\s*number\b/i, /^c[oó]digo\b/i, /^codigo\b/i]);
+      const docCode = extractedFromText.docCode || extractCodeValueFromLines(lines);
+      const contactLine = findBestLine(lines, (line) => /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/.test(line));
+      const websiteLine = findBestLine(lines, (line) => /\b(?:selec\.cl|www\.selec\.cl)\b/i.test(line));
+      const contactoPdf = [contactLine, websiteLine].filter(Boolean).join(" · ") || extractedFromText.contacto || CONTACTO_DEFAULT;
 
       const specsStart = lines.findIndex((line) => /caracter[ií]sticas? t[eé]cnicas?/i.test(line));
-      const notesIndex = lines.findIndex((line) => /notas?/i.test(line));
-      const specsBlock = specsStart >= 0
-        ? lines.slice(specsStart + 1, notesIndex >= 0 ? notesIndex : lines.length)
-        : [];
+      const notesIndex = lines.findIndex((line) => /(notas?|observaciones?)/i.test(line));
+      const descStart = lines.findIndex((line) => /descripc(i|ó)n/i.test(line));
+      const descEnd = [specsStart, notesIndex, lines.length].filter((index) => index >= 0).sort((a, b) => a - b)[0] ?? lines.length;
+
+      let desc = "";
+      if (descStart >= 0) {
+        desc = lines.slice(descStart + 1, descEnd).join(" ");
+      } else {
+        const rangeStart = titleMarker >= 0 ? titleMarker + 1 : 0;
+        desc = lines
+          .slice(rangeStart, descEnd)
+          .filter((line) => !/^(marca|modelo|fabricante|código|codigo|referencia|descripción|descripcion|características técnicas|caracteristicas tecnicas|notas|observaciones)/i.test(line))
+          .join(" ");
+      }
+
+      const specsBlock = specsStart >= 0 ? lines.slice(specsStart + 1, notesIndex >= 0 ? notesIndex : lines.length) : [];
       const specs = specsBlock
-        .map(extractSpecLine)
+        .map((line) => extractSpecLine(line))
         .filter((spec): spec is Spec => spec !== null)
         .slice(0, 8);
 
-      const descStart = titleMarker >= 0 ? titleMarker + 1 : 0;
-      const descEnd = specsStart >= 0 ? specsStart : notesIndex >= 0 ? notesIndex : lines.length;
-      const desc = lines
-        .slice(descStart, descEnd)
-        .filter((line) => !/^(marca|modelo|ft|ficha técnica|caracter[ií]sticas? t[eé]cnicas?|notas?)/i.test(line))
-        .join(" ");
+      const notes = notesIndex >= 0 ? lines.slice(notesIndex + 1).join(" ") : "";
 
-      const notes = notesIndex >= 0
-        ? lines.slice(notesIndex + 1).join(" ")
-        : "";
-
-      applyFichaData({
+      const heuristicData = {
         empresa: EMPRESA_DEFAULT,
-        titulo: title,
+        titulo: extractedFromText.titulo || title,
         marca,
         modelo,
         docCode,
-        desc,
+        desc: extractedFromText.desc || desc,
         notas: notes,
         contacto: contactoPdf,
         specs: specs.length ? specs : [{ k: "", v: "", img: null }],
         logo: defaultLogo.src,
         photos: [],
-      });
+      };
+
+      applyFichaData(heuristicData);
+      setLastPdfText(rawText);
+      await extractWithAi(rawText, heuristicData);
     } catch (error) {
       console.error(error);
       alert("No se pudo leer el PDF. Asegúrate de que sea una ficha técnica válida.");
@@ -312,6 +595,7 @@ export default function FichaTecnicaGenerator() {
           <button className="btn primary" onClick={downloadPdf}>Descargar PDF</button>
         </div>
       </div>
+      {aiNotice ? <div className="ai-status">{aiNotice}</div> : null}
 
       <div className="main">
         {/* ================= EDITOR ================= */}
