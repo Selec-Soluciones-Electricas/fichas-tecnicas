@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import defaultLogo from "@/img/Alta resolución.jpg";
+import FichaHeader from "./FichaHeader";
+import FichaBody from "./FichaBody";
+import FichaFooter from "./FichaFooter";
 
 type Spec = { k: string; v: string; img: string | null };
 
@@ -22,7 +26,7 @@ export default function FichaTecnicaGenerator() {
   const [notas, setNotas] = useState("");
   const [contacto, setContacto] = useState(CONTACTO_DEFAULT);
 
-  const [logo, setLogo] = useState<string | null>(null);
+  const [logo, setLogo] = useState<string | null>(defaultLogo.src);
   const [photos, setPhotos] = useState<string[]>([]);
   const [specs, setSpecs] = useState<Spec[]>([
     { k: "", v: "", img: null },
@@ -119,57 +123,191 @@ export default function FichaTecnicaGenerator() {
     URL.revokeObjectURL(a.href);
   };
 
-  const importJson = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
+  const readArrayBuffer = (f: File): Promise<ArrayBuffer> =>
+    new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result as ArrayBuffer);
+      r.onerror = reject;
+      r.readAsArrayBuffer(f);
+    });
+
+  const applyFichaData = (d: Partial<{
+    empresa: string;
+    titulo: string;
+    marca: string;
+    modelo: string;
+    docCode: string;
+    desc: string;
+    notas: string;
+    contacto: string;
+    specs: Spec[];
+    logo: string | null;
+    photos: string[];
+  }>) => {
+    setEmpresa(d.empresa || EMPRESA_DEFAULT);
+    setTitulo(d.titulo || "");
+    setMarca(d.marca || "");
+    setModelo(d.modelo || "");
+    setDocCode(d.docCode || "");
+    setDesc(d.desc || "");
+    setNotas(d.notas || "");
+    setContacto(d.contacto || CONTACTO_DEFAULT);
+    setSpecs(
+      Array.isArray(d.specs) && d.specs.length
+        ? d.specs.map((s) => ({ k: s.k || "", v: s.v || "", img: s.img || null }))
+        : [{ k: "", v: "", img: null }]
+    );
+    setPhotos(Array.isArray(d.photos) ? d.photos.slice() : []);
+    setLogo(d.logo ?? defaultLogo.src);
+  };
+
+  const importJsonFile = (f: File) => {
     const r = new FileReader();
     r.onload = () => {
       try {
         const d = JSON.parse(r.result as string);
-        setEmpresa(d.empresa || EMPRESA_DEFAULT);
-        setTitulo(d.titulo || "");
-        setMarca(d.marca || "");
-        setModelo(d.modelo || "");
-        setDocCode(d.docCode || "");
-        setDesc(d.desc || "");
-        setNotas(d.notas || "");
-        setContacto(d.contacto || CONTACTO_DEFAULT);
-        setSpecs(
-          Array.isArray(d.specs) && d.specs.length
-            ? d.specs.map((s: Partial<Spec>) => ({ k: s.k || "", v: s.v || "", img: s.img || null }))
-            : [{ k: "", v: "", img: null }]
-        );
-        setPhotos(
-          Array.isArray(d.photos) ? d.photos.slice() : d.photo ? [d.photo] : []
-        );
-        setLogo(d.logo || null);
+        applyFichaData(d);
       } catch {
         alert("El archivo no es un JSON válido de ficha técnica.");
       }
     };
     r.readAsText(f);
+  };
+
+  const extractSpecLine = (line: string): Spec | null => {
+    const normalized = line.replace(/\u00A0/g, " ").trim();
+    const sep = normalized.match(/[:–—-]/);
+    if (sep) {
+      const [key, ...rest] = normalized.split(sep[0]);
+      return { k: key.trim(), v: rest.join(sep[0]).trim(), img: null };
+    }
+    const parts = normalized.split(/\s{2,}/).map((item) => item.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      return { k: parts[0], v: parts.slice(1).join(" "), img: null };
+    }
+    const words = normalized.split(/\s+/);
+    if (words.length > 2) {
+      return { k: words.slice(0, -1).join(" "), v: words.at(-1) ?? "", img: null };
+    }
+    return null;
+  };
+
+  const parsePdfText = async (buffer: ArrayBuffer): Promise<string> => {
+    const pdfjsLib: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+    const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
+
+    const pages: string[] = [];
+    for (let i = 1; i <= doc.numPages; i += 1) {
+      const page = await doc.getPage(i);
+      const content = await page.getTextContent();
+      const pageText = content.items.map((item: any) => item.str || "").join("\n");
+      pages.push(pageText);
+    }
+
+    return pages.join("\n");
+  };
+
+  const importPdfFile = async (f: File) => {
+    try {
+      const buffer = await readArrayBuffer(f);
+      const rawText = await parsePdfText(buffer);
+      const lines = rawText
+        .split(/\r?\n/)
+        .map((line) => line.replace(/\u00A0/g, " ").trim())
+        .filter(Boolean);
+
+      const findLabel = (regex: RegExp) => lines.find((line) => regex.test(line)) || "";
+      const extractLabel = (line: string, regex: RegExp) => line.replace(regex, "").trim();
+
+      const titleMarker = lines.findIndex((line) => /ficha\s*t[eé]cnica/i.test(line));
+      const title = titleMarker >= 0
+        ? lines.slice(titleMarker + 1).find((line) => !/^(marca|modelo|ft|caracter[ií]sticas? t[eé]cnicas?|notas?)/i.test(line)) || ""
+        : lines.find((line) => line.length > 15) || "";
+
+      const marcaLine = findLabel(/marca\s*[:\-]/i);
+      const modeloLine = findLabel(/modelo\s*[:\-]/i);
+      const docCodeLine = findLabel(/ft[-\s]?\d+/i) || findLabel(/c[oó]digo.*documento/i);
+      const contactLine = findLabel(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/);
+      const websiteLine = findLabel(/\b(?:selec\.cl|www\.selec\.cl)\b/i);
+
+      const marca = marcaLine ? extractLabel(marcaLine, /.*marca\s*[:\-]?\s*/i) : "";
+      const modelo = modeloLine ? extractLabel(modeloLine, /.*modelo\s*[:\-]?\s*/i) : "";
+      const docCodeMatch = docCodeLine.match(/(FT[-\s]?\d+)/i);
+      const docCode = docCodeMatch ? docCodeMatch[1].toUpperCase().replace(/\s+/g, "-") : docCodeLine.trim();
+      const contactoPdf = [contactLine, websiteLine].filter(Boolean).join(" · ") || CONTACTO_DEFAULT;
+
+      const specsStart = lines.findIndex((line) => /caracter[ií]sticas? t[eé]cnicas?/i.test(line));
+      const notesIndex = lines.findIndex((line) => /notas?/i.test(line));
+      const specsBlock = specsStart >= 0
+        ? lines.slice(specsStart + 1, notesIndex >= 0 ? notesIndex : lines.length)
+        : [];
+      const specs = specsBlock
+        .map(extractSpecLine)
+        .filter((spec): spec is Spec => spec !== null)
+        .slice(0, 8);
+
+      const descStart = titleMarker >= 0 ? titleMarker + 1 : 0;
+      const descEnd = specsStart >= 0 ? specsStart : notesIndex >= 0 ? notesIndex : lines.length;
+      const desc = lines
+        .slice(descStart, descEnd)
+        .filter((line) => !/^(marca|modelo|ft|ficha técnica|caracter[ií]sticas? t[eé]cnicas?|notas?)/i.test(line))
+        .join(" ");
+
+      const notes = notesIndex >= 0
+        ? lines.slice(notesIndex + 1).join(" ")
+        : "";
+
+      applyFichaData({
+        empresa: EMPRESA_DEFAULT,
+        titulo: title,
+        marca,
+        modelo,
+        docCode,
+        desc,
+        notas: notes,
+        contacto: contactoPdf,
+        specs: specs.length ? specs : [{ k: "", v: "", img: null }],
+        logo: defaultLogo.src,
+        photos: [],
+      });
+    } catch (error) {
+      console.error(error);
+      alert("No se pudo leer el PDF. Asegúrate de que sea una ficha técnica válida.");
+    }
+  };
+
+  const importFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")) {
+      await importPdfFile(f);
+    } else {
+      importJsonFile(f);
+    }
     e.target.value = "";
   };
 
-  const specsHasContent = specs.some((s) => s.k.trim() || s.v.trim() || s.img);
   const nPhotos = photos.length;
-  const photosClass = `ft-photos n${nPhotos === 0 ? 1 : Math.min(nPhotos, 4)}`;
 
   return (
     <>
       <div className="topbar">
         <div className="brand">
-          <div className="bolt">⚡</div>
+          
+          {logo && (
+            <img className="ft-logo" src={logo} alt={empresa} />
+          )}
+
           <div>
             <h1>Generador de Fichas Técnicas</h1>
             <span>Foto(s) + título + especificaciones → PDF (A4)</span>
           </div>
         </div>
         <div className="actions">
-          <button className="btn" onClick={exportJson}>Exportar datos</button>
           <label className="btn" style={{ cursor: "pointer" }}>
             Importar datos
-            <input type="file" accept=".json" onChange={importJson} style={{ display: "none" }} />
+            <input type="file" accept=".json,.pdf" onChange={importFile} style={{ display: "none" }} />
           </label>
           <button className="btn primary" onClick={downloadPdf}>Descargar PDF</button>
         </div>
@@ -178,21 +316,7 @@ export default function FichaTecnicaGenerator() {
       <div className="main">
         {/* ================= EDITOR ================= */}
         <aside className="editor">
-          <h2>Identidad</h2>
-          <div className="field">
-            <label>Logo de la empresa (opcional)</label>
-            <div className={`file-drop${logo ? " loaded" : ""}`}>
-              <span>{logo ? "Logo cargado" : "Haz clic para subir el logo"}</span>
-              <input type="file" accept="image/*" onChange={onLogo} />
-            </div>
-            {logo && (
-              <button className="file-clear" onClick={() => setLogo(null)}>Quitar logo</button>
-            )}
-          </div>
-          <div className="field">
-            <label>Nombre de la empresa</label>
-            <input type="text" value={empresa} onChange={(e) => setEmpresa(e.target.value)} placeholder="Nombre de la empresa" />
-          </div>
+
 
           <h2>Fotografías del producto</h2>
           <div className="field">
@@ -273,94 +397,29 @@ export default function FichaTecnicaGenerator() {
             Para pegar una imagen en una característica: haz clic en su campo <i>Valor</i> y pega con <b>Ctrl+V</b>.
           </div>
 
-          <h2>Notas y pie de página</h2>
-          <div className="field">
-            <label>Notas / certificaciones (opcional)</label>
-            <textarea value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Ej: Certificado IEC 60947-4-1. Garantía 12 meses." />
-          </div>
-          <div className="field">
-            <label>Datos de contacto</label>
-            <input type="text" value={contacto} onChange={(e) => setContacto(e.target.value)} placeholder="Ej: info@selec.cl · selec.cl" />
-          </div>
+
+
         </aside>
 
         {/* ================= VISTA PREVIA ================= */}
         <div className="preview-zone">
           <div className="sheet">
             <div className="sheet-inner">
-              <div className="ft-head">
-                <div>
-                  {logo ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img className="ft-logo" src={logo} alt={empresa} />
-                  ) : (
-                    <span className="ft-logo-text">{(empresa || "Empresa").toUpperCase()}</span>
-                  )}
-                </div>
-                <div className="ft-doc">
-                  <div className="doc-label">Ficha Técnica</div>
-                  <div className="doc-code">{docCode}</div>
-                </div>
-              </div>
-              <div className="volt-bar" />
+              <FichaHeader logo={logo} empresa={empresa} docCode={docCode} />
+              {/* bar yellow */}
+                  <div className="volt-bar"/> 
 
-              <div className="ft-title">{titulo || "Título del producto"}</div>
-              <div className="ft-subtitle">
-                {marca && <span>MARCA&nbsp;&nbsp;<b>{marca}</b></span>}
-                {modelo && <span>MODELO&nbsp;&nbsp;<b>{modelo}</b></span>}
-              </div>
+              <FichaBody
+                titulo={titulo}
+                marca={marca}
+                modelo={modelo}
+                desc={desc}
+                photos={photos}
+                specs={specs}
+                notes={notas}
+              />
 
-              <div className="ft-body">
-                <div className="ft-desc">{desc || "La descripción del producto aparecerá aquí."}</div>
-                <div className={photosClass}>
-                  {nPhotos === 0 ? (
-                    <div className="ft-photo"><div className="ph">Fotografía<br />del producto</div></div>
-                  ) : (
-                    photos.map((src, idx) => (
-                      <div className="ft-photo" key={idx}>
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={src} alt={titulo || "Producto"} />
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {specsHasContent && (
-                <div className="ft-specs-block">
-                  <div className="ft-specs-title">Características técnicas</div>
-                  <table className="ft-specs">
-                    <tbody>
-                      {specs
-                        .filter((s) => s.k.trim() || s.v.trim() || s.img)
-                        .map((s, idx) => (
-                          <tr key={idx}>
-                            <td className="k">{s.k}</td>
-                            <td className="v">
-                              {s.img ? (
-                                <>
-                                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                                  <img src={s.img} alt={s.k || ""} />
-                                  {s.v && <div style={{ marginTop: 4 }}>{s.v}</div>}
-                                </>
-                              ) : (
-                                s.v
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {notas && <div className="ft-notes">{notas}</div>}
-
-              <div className="ft-foot">
-                <span className="co">{empresa}</span>
-                <span>{contacto}</span>
-                <span className="date">{fecha}</span>
-              </div>
+              <FichaFooter empresa={empresa} contacto={contacto} fecha={fecha} />
             </div>
           </div>
         </div>
@@ -483,19 +542,20 @@ export default function FichaTecnicaGenerator() {
           background: radial-gradient(circle at 1px 1px, #23262c 1px, transparent 0) 0 0/22px 22px, var(--editor-bg);
         }
         .sheet {
-          width: 794px; min-height: 1123px; background: var(--paper); color: var(--ink);
+          width: 794px; height: 1123px; background: var(--paper); color: var(--ink);
           box-shadow: 0 8px 40px rgba(0,0,0,.5); display: flex; flex-direction: column; flex-shrink: 0;
         }
         .sheet-inner { flex: 1; display: flex; flex-direction: column; padding: 48px 52px 36px; }
+        .ft-foot { margin-top: auto; }
         .ft-head { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 14px; }
-        .ft-logo { max-height: 52px; max-width: 220px; object-fit: contain; }
+        .ft-logo { max-height: 60px; max-width: 220px; object-fit: contain; }
         .ft-logo-text { font-weight: 900; font-size: 26px; letter-spacing: .01em; font-stretch: 110%; }
         .ft-doc { text-align: right; }
         .ft-doc .doc-label { font-size: 12px; font-weight: 800; letter-spacing: .22em; text-transform: uppercase; }
         .ft-doc .doc-code { font-family: var(--font-mono), monospace; font-size: 11px; color: var(--steel); margin-top: 2px; }
         .volt-bar {
-          height: 6px; background: var(--amber);
-          background: repeating-linear-gradient(-45deg, var(--amber) 0 14px, var(--ink) 14px 17px);
+          height: 6px; 
+          background: repeating-linear-gradient(#ff8c00 0 250px, var(--ink) 14px 17px);
           margin-bottom: 26px;
         }
         .ft-title { font-weight: 800; font-size: 30px; line-height: 1.12; font-stretch: 105%; letter-spacing: -.01em; margin-bottom: 6px; }
@@ -542,8 +602,9 @@ export default function FichaTecnicaGenerator() {
           .topbar, .editor { display: none !important; }
           .main { display: block !important; overflow: visible !important; }
           .preview-zone { padding: 0 !important; background: #fff !important; display: block !important; overflow: visible !important; }
-          .sheet { width: 210mm !important; min-height: 297mm !important; box-shadow: none !important; margin: 0 !important; transform: none !important; }
-          .sheet-inner { padding: 14mm 15mm 10mm; }
+          .sheet { width: 210mm !important; height: 297mm !important; box-shadow: none !important; margin: 0 !important; transform: none !important; display: flex; flex-direction: column; }
+          .sheet-inner { flex: 1; display: flex; flex-direction: column; padding: 14mm 15mm 10mm; }
+          .ft-foot { margin-top: auto; }
           * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
         }
         @media (max-width: 900px) {
