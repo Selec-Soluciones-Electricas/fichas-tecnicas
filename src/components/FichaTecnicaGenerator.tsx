@@ -422,6 +422,9 @@ export default function FichaTecnicaGenerator() {
               <FichaFooter empresa={empresa} contacto={contacto} fecha={fecha} />
             </div>
           </div>
+          <div className="sheet-print-footer">
+            <FichaFooter empresa={empresa} contacto={contacto} fecha={fecha} />
+          </div>
         </div>
       </div>
 
@@ -542,10 +545,10 @@ export default function FichaTecnicaGenerator() {
           background: radial-gradient(circle at 1px 1px, #23262c 1px, transparent 0) 0 0/22px 22px, var(--editor-bg);
         }
         .sheet {
-          width: 794px; height: 1123px; background: var(--paper); color: var(--ink);
+          width: 794px; min-height: 1123px; background: var(--paper); color: var(--ink);
           box-shadow: 0 8px 40px rgba(0,0,0,.5); display: flex; flex-direction: column; flex-shrink: 0;
         }
-        .sheet-inner { flex: 1; display: flex; flex-direction: column; padding: 48px 52px 36px; }
+        .sheet-inner { flex: 1; display: flex; flex-direction: column; padding: 48px 52px 36px; overflow: visible; }
         .ft-foot { margin-top: auto; }
         .ft-head { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 14px; }
         .ft-logo { max-height: 60px; max-width: 220px; object-fit: contain; }
@@ -596,14 +599,38 @@ export default function FichaTecnicaGenerator() {
         .ft-foot .co { font-weight: 700; color: var(--ink); font-size: 11px; }
         .ft-foot .date { font-family: var(--font-mono), monospace; }
 
+        .sheet-print-footer { display: none; }
+
         @media print {
-          @page { size: A4; margin: 0; }
+          .sheet-print-footer {
+            display: block;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            width: auto;
+            padding: 0 14mm 10mm;
+            box-sizing: border-box;
+            background: #fff;
+            z-index: 1000;
+          }
+          .sheet-print-footer .ft-foot {
+            margin-top: 0;
+            padding-top: 10px;
+            border-top: 2px solid var(--ink);
+            page-break-inside: avoid;
+          }
+          .sheet { page-break-inside: avoid; }
+          .sheet-inner { display: block; }
+          .ft-foot { display: none; }
+          .sheet-print-footer .ft-foot { display: flex !important; }
+          @page { size: A4; margin: 14mm 15mm 20mm; }
           html, body { overflow: visible !important; height: auto !important; background: #fff !important; }
           .topbar, .editor { display: none !important; }
           .main { display: block !important; overflow: visible !important; }
           .preview-zone { padding: 0 !important; background: #fff !important; display: block !important; overflow: visible !important; }
-          .sheet { width: 210mm !important; height: 297mm !important; box-shadow: none !important; margin: 0 !important; transform: none !important; display: flex; flex-direction: column; }
-          .sheet-inner { flex: 1; display: flex; flex-direction: column; padding: 14mm 15mm 10mm; }
+          .sheet { width: 210mm !important; min-height: 297mm !important; height: auto !important; box-shadow: none !important; margin: 0 auto !important; transform: none !important; display: block !important; }
+          .sheet-inner { flex: none; display: block; padding: 0; }
           .ft-foot { margin-top: auto; }
           * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
         }
