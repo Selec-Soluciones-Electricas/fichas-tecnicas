@@ -14,7 +14,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Generador de Fichas Técnicas",
+  title: "Ficha Técnica",
   description: "Crea fichas técnicas de productos (A4) listas para exportar a PDF.",
 };
 
