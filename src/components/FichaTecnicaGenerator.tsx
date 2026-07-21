@@ -189,6 +189,19 @@ export default function FichaTecnicaGenerator() {
     return normalized;
   };
 
+  const extractDescriptionFromLines = (lines: string[]) => {
+    const descriptionLabelIndex = lines.findIndex((line) => /^descripc(i|ó)n/i.test(line));
+    const candidateLines = descriptionLabelIndex >= 0
+      ? lines.slice(descriptionLabelIndex + 1)
+      : lines;
+
+    return candidateLines
+      .filter((line) => line && isValueLike(line) && !/^(marca|modelo|fabricante|código|codigo|referencia|descripción|descripcion|características|caracteristicas|notas|observaciones|ficha|selec|www\.|@)/i.test(line))
+      .slice(0, 6)
+      .join(" ")
+      .trim();
+  };
+
   const extractCoreFieldsFromText = (text: string) => {
     const normalizedText = text.replace(/\s+/g, " ").trim();
     const lines = text
@@ -201,24 +214,26 @@ export default function FichaTecnicaGenerator() {
       return match?.[1]?.trim() || "";
     };
 
-    const marca = findValueFromText(/\b(?:marca|fabricante|brand)\b[^A-Za-zÁÉÍÓÚÑáéíóúñ0-9]{0,6}([A-Za-zÁÉÍÓÚÑáéíóúñ0-9/._-]{1,60})/i) ||
-      extractFieldValueFromLines(lines, [/^marca\b/i, /^fabricante\b/i, /^brand\b/i]);
+    const marca = findValueFromText(/\b(?:marca|fabricante|brand|marca comercial)\b[^A-Za-zÁÉÍÓÚÑáéíóúñ0-9]{0,6}([A-Za-zÁÉÍÓÚÑáéíóúñ0-9/._-]+(?:\s+[A-Za-zÁÉÍÓÚÑáéíóúñ0-9/._-]+){0,6})/i) ||
+      extractFieldValueFromLines(lines, [/^marca\b/i, /^fabricante\b/i, /^brand\b/i, /^marca comercial\b/i]);
 
-    const modelo = findValueFromText(/\b(?:modelo|referencia|part\s*number|código|codigo)\b[^A-Za-zÁÉÍÓÚÑáéíóúñ0-9]{0,6}([A-Za-zÁÉÍÓÚÑáéíóúñ0-9/._-]{1,60})/i) ||
-      extractFieldValueFromLines(lines, [/^modelo\b/i, /^referencia\b/i, /^part\s*number\b/i, /^c[oó]digo\b/i, /^codigo\b/i]);
+    const modelo = findValueFromText(/\b(?:modelo|referencia|part\s*number|código|codigo|serie|n[°.º]?\s*modelo|nro\.?\s*modelo)\b[^A-Za-zÁÉÍÓÚÑáéíóúñ0-9]{0,6}([A-Za-zÁÉÍÓÚÑáéíóúñ0-9/._-]+(?:\s+[A-Za-zÁÉÍÓÚÑáéíóúñ0-9/._-]+){0,6})/i) ||
+      extractFieldValueFromLines(lines, [/^modelo\b/i, /^referencia\b/i, /^part\s*number\b/i, /^c[oó]digo\b/i, /^codigo\b/i, /^serie\b/i, /^n[°.º]?\s*modelo\b/i]);
 
     const docCode = normalizedText.match(/\b(FT[-\s]?\d+)\b/i)?.[1]?.toUpperCase().replace(/\s+/g, "-") ||
-      extractCodeValueFromLines(lines);
+      extractCodeValueFromLines(lines) ||
+      findValueFromText(/\b(?:c[oó]digo|codigo)\b[^A-Za-zÁÉÍÓÚÑáéíóúñ0-9]{0,6}([A-Za-zÁÉÍÓÚÑáéíóúñ0-9/._-]+(?:\s+[A-Za-zÁÉÍÓÚÑáéíóúñ0-9/._-]+){0,6})/i);
 
     const title = pickBestCandidate(
       lines.filter((line) => line.length > 8 && !/^(marca|modelo|fabricante|referencia|código|codigo|descripción|descripcion|características|caracteristicas|notas|observaciones|ficha|selec|www\.|@)/i.test(line)),
       scoreTitleCandidate
     ) || lines.find((line) => line.length > 12) || "";
 
-    const desc = lines
-      .filter((line) => line.length > 12 && !/^(marca|modelo|fabricante|referencia|código|codigo|descripción|descripcion|características|caracteristicas|notas|observaciones|ficha|selec|www\.|@)/i.test(line))
-      .slice(0, 6)
-      .join(" ") ||
+    const desc = extractDescriptionFromLines(lines) ||
+      lines
+        .filter((line) => line.length > 12 && !/^(marca|modelo|fabricante|referencia|código|codigo|descripción|descripcion|características|caracteristicas|notas|observaciones|ficha|selec|www\.|@)/i.test(line))
+        .slice(0, 6)
+        .join(" ") ||
       lines.find((line) => line.length > 20) || "";
 
     const contacto = normalizedText.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/)?.[0] ||
@@ -379,7 +394,8 @@ export default function FichaTecnicaGenerator() {
   const parsePdfText = async (buffer: ArrayBuffer): Promise<string> => {
     const pdfjsLib: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
     pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-    const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
+    const stableBuffer = buffer.slice(0);
+    const doc = await pdfjsLib.getDocument({ data: stableBuffer }).promise;
 
     const pageLines: string[] = [];
     for (let i = 1; i <= doc.numPages; i += 1) {
@@ -415,6 +431,123 @@ export default function FichaTecnicaGenerator() {
     }
 
     return pageLines.join("\n");
+  };
+
+  const extractPdfPhotos = async (buffer: ArrayBuffer): Promise<string[]> => {
+    const pdfjsLib: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+    const stableBuffer = buffer.slice(0);
+    const doc = await pdfjsLib.getDocument({ data: stableBuffer }).promise;
+    const photos: string[] = [];
+
+    for (let i = 1; i <= doc.numPages; i += 1) {
+      const page = await doc.getPage(i);
+      const viewport = page.getViewport({ scale: 1.6 });
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+
+      if (!context) continue;
+
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      await page.render({ canvasContext: context, viewport }).promise;
+
+      const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+      const visited = new Uint8Array(canvas.width * canvas.height);
+      const candidates: Array<{ x: number; y: number; width: number; height: number; area: number }> = [];
+
+      const isBackgroundPixel = (index: number) => {
+        const r = data[index];
+        const g = data[index + 1];
+        const b = data[index + 2];
+        const a = data[index + 3];
+        return a < 40 || (r > 240 && g > 240 && b > 240);
+      };
+
+      for (let y = 0; y < canvas.height; y += 1) {
+        for (let x = 0; x < canvas.width; x += 1) {
+          const idx = y * canvas.width + x;
+          if (visited[idx]) continue;
+          const pixelIndex = idx * 4;
+          if (isBackgroundPixel(pixelIndex)) continue;
+
+          const stack: Array<[number, number]> = [[x, y]];
+          visited[idx] = 1;
+          let minX = x;
+          let maxX = x;
+          let minY = y;
+          let maxY = y;
+          let area = 0;
+
+          while (stack.length) {
+            const [cx, cy] = stack.pop()!;
+            const currentIndex = cy * canvas.width + cx;
+            const currentPixel = currentIndex * 4;
+            area += 1;
+            minX = Math.min(minX, cx);
+            maxX = Math.max(maxX, cx);
+            minY = Math.min(minY, cy);
+            maxY = Math.max(maxY, cy);
+
+            const neighbors = [
+              [cx + 1, cy],
+              [cx - 1, cy],
+              [cx, cy + 1],
+              [cx, cy - 1],
+            ];
+
+            for (const [nx, ny] of neighbors) {
+              if (nx < 0 || ny < 0 || nx >= canvas.width || ny >= canvas.height) continue;
+              const nextIndex = ny * canvas.width + nx;
+              if (visited[nextIndex]) continue;
+              const nextPixel = nextIndex * 4;
+              if (!isBackgroundPixel(nextPixel)) {
+                visited[nextIndex] = 1;
+                stack.push([nx, ny]);
+              }
+            }
+          }
+
+          const width = maxX - minX + 1;
+          const height = maxY - minY + 1;
+          const bboxArea = width * height;
+          if (area >= 2000 && width >= 24 && height >= 24 && bboxArea >= 4000 && width / height <= 4 && height / width <= 4) {
+            candidates.push({ x: minX, y: minY, width, height, area });
+          }
+        }
+      }
+
+      candidates.sort((a, b) => b.area - a.area);
+      const seen = new Set<string>();
+
+      for (const candidate of candidates.slice(0, 6)) {
+        const cropCanvas = document.createElement("canvas");
+        const cropContext = cropCanvas.getContext("2d");
+        if (!cropContext) continue;
+
+        const padding = 8;
+        const cropX = Math.max(0, candidate.x - padding);
+        const cropY = Math.max(0, candidate.y - padding);
+        const cropWidth = Math.min(canvas.width - cropX, candidate.width + padding * 2);
+        const cropHeight = Math.min(canvas.height - cropY, candidate.height + padding * 2);
+
+        cropCanvas.width = cropWidth;
+        cropCanvas.height = cropHeight;
+        cropContext.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+
+        const dataUrl = cropCanvas.toDataURL("image/png");
+        if (dataUrl && dataUrl !== "data:," && dataUrl.length > 300) {
+          const key = `${cropWidth}x${cropHeight}:${dataUrl.slice(0, 120)}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            photos.push(dataUrl);
+          }
+        }
+      }
+    }
+
+    return photos.filter((photo, index, self) => self.indexOf(photo) === index);
   };
 
   const extractWithAi = async (
@@ -495,6 +628,7 @@ export default function FichaTecnicaGenerator() {
     try {
       const buffer = await readArrayBuffer(f);
       const rawText = await parsePdfText(buffer);
+      const extractedPhotos = await extractPdfPhotos(buffer);
       setLastPdfText(rawText);
       const lines = rawText
         .split(/\r?\n/)
@@ -553,7 +687,7 @@ export default function FichaTecnicaGenerator() {
         contacto: contactoPdf,
         specs: specs.length ? specs : [{ k: "", v: "", img: null }],
         logo: defaultLogo.src,
-        photos: [],
+        photos: extractedPhotos,
       };
 
       applyFichaData(heuristicData);
