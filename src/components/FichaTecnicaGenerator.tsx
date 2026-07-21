@@ -42,6 +42,11 @@ export default function FichaTecnicaGenerator() {
     return `${d.getDate()} de ${MESES[d.getMonth()]} de ${d.getFullYear()}`;
   }, []);
 
+  useEffect(() => {
+    const nextTitle = (modelo || "Ficha Técnica").trim() || "Ficha Técnica";
+    document.title = nextTitle;
+  }, [modelo]);
+
   // ---------- Utilidades ----------
   const readFile = (f: File): Promise<string> =>
     new Promise((resolve, reject) => {
@@ -150,7 +155,7 @@ export default function FichaTecnicaGenerator() {
     setEmpresa(d.empresa || EMPRESA_DEFAULT);
     setTitulo(d.titulo || "");
     setMarca(d.marca || "");
-    setModelo(d.modelo || "");
+    setModelo(d.modelo?.trim() || "");
     setDocCode(d.docCode || "");
     setDesc(d.desc || "");
     setNotas(d.notas || "");
@@ -634,7 +639,12 @@ export default function FichaTecnicaGenerator() {
           <h2>Producto</h2>
           <div className="field">
             <label>Título del producto</label>
-            <input type="text" value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Ej: Contactor Siemens 3RT2015-1AP01" />
+            <input
+              type="text"
+              value={titulo}
+              onChange={(e) => setTitulo(e.target.value)}
+              placeholder="Ej: Contactor Siemens 3RT2015-1AP01"
+            />
           </div>
           <div className="field">
             <label>Marca</label>
@@ -642,7 +652,12 @@ export default function FichaTecnicaGenerator() {
           </div>
           <div className="field">
             <label>Modelo / Código</label>
-            <input type="text" value={modelo} onChange={(e) => setModelo(e.target.value)} placeholder="Ej: 3RT2015-1AP01" />
+            <input
+              type="text"
+              value={modelo}
+              onChange={(e) => setModelo(e.target.value)}
+              placeholder="Ej: 3RT2015-1AP01"
+            />
           </div>
           <div className="field">
             <label>Código del documento (opcional)</label>
