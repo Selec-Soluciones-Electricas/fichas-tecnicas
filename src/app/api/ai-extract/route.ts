@@ -1,5 +1,56 @@
 import { NextRequest, NextResponse } from "next/server";
 
+type Spec = { k: string; v: string };
+
+const RESPONSE_SCHEMA = `{
+  "empresa": "",
+  "titulo": "",
+  "marca": "",
+  "modelo": "",
+  "docCode": "",
+  "desc": "",
+  "notas": "",
+  "contacto": "",
+  "specs": [{ "k": "", "v": "" }]
+}`;
+
+const EXTRACTION_RULES = `
+Reglas:
+- Devuelve SOLO un JSON válido con exactamente estas claves: empresa, titulo, marca, modelo, docCode, desc, notas, contacto, specs.
+- No agregues explicaciones, comentarios ni marcado (nada de \`\`\`).
+- No inventes datos que no estén respaldados por el texto. Si no encuentras un valor, usa cadena vacía ("") o arreglo vacío ([]).
+- "titulo": nombre comercial del producto (no el nombre de la empresa fabricante ni del distribuidor).
+- "marca": fabricante del producto.
+- "modelo": código o referencia exacta del producto (part number, referencia, código de catálogo).
+- "docCode": código interno del documento/ficha si aparece (ej: FT-1234), no el código del producto.
+- "desc": 2 a 4 frases claras describiendo qué es el producto, su aplicación y características principales.
+- "notas": observaciones, advertencias o información adicional relevante que no sea una característica técnica puntual.
+- "contacto": email o sitio web de contacto si aparece.
+- "specs": lista de características técnicas del producto como pares clave-valor (ej: {"k":"Tensión bobina","v":"24V AC"}). Incluye únicamente especificaciones reales y concretas (eléctricas, mecánicas, dimensiones, certificaciones, etc.), máximo 15 elementos, cada "k" y "v" concisos (menos de 60 caracteres).
+`;
+
+function sanitizeSpecs(rawSpecs: unknown): Spec[] {
+  if (!Array.isArray(rawSpecs)) return [];
+  return rawSpecs
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const k = String((item as Record<string, unknown>).k ?? "").trim().slice(0, 80);
+      const v = String((item as Record<string, unknown>).v ?? "").trim().slice(0, 200);
+      if (!k && !v) return null;
+      return { k, v };
+    })
+    .filter((item): item is Spec => item !== null)
+    .slice(0, 15);
+}
+
+function extractJsonObject(raw: string): Record<string, unknown> {
+  const withoutFences = raw.replace(/```json/gi, "").replace(/```/g, "").trim();
+  const start = withoutFences.indexOf("{");
+  const end = withoutFences.lastIndexOf("}");
+  const candidate = start >= 0 && end > start ? withoutFences.slice(start, end + 1) : withoutFences;
+  return JSON.parse(candidate);
+}
+
 function buildFallbackExtraction(text: string) {
   const lines = text
     .split(/\r?\n/)
@@ -57,11 +108,11 @@ export async function POST(req: NextRequest) {
             messages: [
               {
                 role: "system",
-                content: "Eres un extractor fiable de información técnica desde PDFs. Responde solo con JSON válido.",
+                content: "Eres un extractor fiable de información técnica de productos desde PDFs. Respondes solo con JSON válido.",
               },
               {
                 role: "user",
-                content: `Extrae del siguiente texto un JSON con empresa, titulo, marca, modelo, docCode, desc, notas, contacto. Si no aparece algo, usa cadena vacía. Texto:\n${text}`,
+                content: `Extrae del siguiente texto de una ficha técnica un JSON con la información del producto.\n${EXTRACTION_RULES}\nFormato:\n${RESPONSE_SCHEMA}\n\nTexto:\n${text}`,
               },
             ],
           }),
@@ -70,8 +121,12 @@ export async function POST(req: NextRequest) {
         if (response.ok) {
           const data = await response.json();
           const content = data?.message?.content || "{}";
-          const parsed = JSON.parse(content);
-          return NextResponse.json({ ...fallback, ...parsed });
+          const parsed = extractJsonObject(content);
+          return NextResponse.json({
+            ...fallback,
+            ...parsed,
+            specs: sanitizeSpecs(parsed.specs),
+          });
         }
       } catch {
         // Caer al fallback local si Ollama no está disponible.
@@ -81,36 +136,17 @@ export async function POST(req: NextRequest) {
     }
 
     const prompt = `
-Eres un extractor experto de fichas técnicas en español.
-Tu tarea es leer el texto de un PDF y devolver un JSON con los campos más precisos posibles.
+Eres un extractor experto de fichas técnicas de productos eléctricos/industriales en español.
+Tu tarea es leer el texto de un PDF (puede venir desordenado por la extracción de texto) y devolver un JSON con los campos más precisos posibles para rellenar un generador de fichas técnicas.
+${EXTRACTION_RULES}
+Formato:
+${RESPONSE_SCHEMA}
+
+Datos actuales del usuario (úsalos solo como contexto de referencia, prioriza lo que encuentres en el texto):
+${JSON.stringify(currentData || {}, null, 2)}
 
 Texto del PDF:
 ${text}
-
-Datos actuales del usuario (si existen):
-${JSON.stringify(currentData || {}, null, 2)}
-
-Requisitos:
-- Devuelve SOLO un JSON válido.
-- No agregues explicaciones.
-- Extrae: empresa, titulo, marca, modelo, docCode, desc, notas, contacto.
-- Si no encuentras un valor, usa cadena vacía.
-- Para modelo, prioriza el código o referencia del producto.
-- Para desc, escribe una descripción breve y clara del producto.
-- Para notas, usa texto adicional si existe.
-- Para contacto, usa email o web si aparece.
-
-Formato:
-{
-  "empresa": "",
-  "titulo": "",
-  "marca": "",
-  "modelo": "",
-  "docCode": "",
-  "desc": "",
-  "notas": "",
-  "contacto": ""
-}
 `;
 
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -122,10 +158,11 @@ Formato:
       body: JSON.stringify({
         model: "gpt-4.1-mini",
         temperature: 0.1,
+        response_format: { type: "json_object" },
         messages: [
           {
             role: "system",
-            content: "Eres un extractor fiable de información técnica desde PDFs.",
+            content: "Eres un extractor fiable de información técnica de productos desde PDFs.",
           },
           {
             role: "user",
@@ -141,9 +178,13 @@ Formato:
     }
 
     const content = data.choices?.[0]?.message?.content || "{}";
-    const parsed = JSON.parse(content);
+    const parsed = extractJsonObject(content);
 
-    return NextResponse.json({ ...fallback, ...parsed });
+    return NextResponse.json({
+      ...fallback,
+      ...parsed,
+      specs: sanitizeSpecs(parsed.specs),
+    });
   } catch (error) {
     console.warn(error);
     return NextResponse.json({

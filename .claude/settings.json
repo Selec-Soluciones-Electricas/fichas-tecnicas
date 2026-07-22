@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n 'await import\\(/\\\\* webpackIgnore' src/components/FichaTecnicaGenerator.tsx)",
+      "Bash(curl -sI http://localhost:3000/pdfjs/pdf.min.mjs)",
+      "Bash(cp \"c:\\\\Users\\\\selec\\\\fichas-tecnicas\\\\node_modules\\\\pdfjs-dist\\\\build\\\\pdf.min.mjs\" \"c:\\\\Users\\\\selec\\\\fichas-tecnicas\\\\public\\\\pdfjs\\\\pdf.min.mjs\")",
+      "Bash(cp \"c:\\\\Users\\\\selec\\\\fichas-tecnicas\\\\node_modules\\\\pdfjs-dist\\\\build\\\\pdf.worker.min.mjs\" \"c:\\\\Users\\\\selec\\\\fichas-tecnicas\\\\public\\\\pdf.worker.min.mjs\")",
+      "Bash(node -e \"console.log\\(require\\('pdfjs-dist/package.json'\\).version\\)\")",
+      "Bash(npm view *)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/mozilla/pdf.js/master/CHANGELOG.md\")",
+      "Bash(cp node_modules/pdfjs-dist/build/pdf.min.mjs public/pdfjs/pdf.min.mjs)",
+      "Bash(cp node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.mjs)",
+      "Bash(node check-tohex.js)",
+      "Bash(timeout 150 npx -y playwright@1.48.0 install chrome)",
+      "Bash(node check-tohex-realchrome.js)",
+      "Bash(node verify-pdf-import-realchrome.js)",
+      "Bash(git checkout *)",
+      "Bash(rm -rf public/pdfjs)",
+      "Bash(rm -rf \"C:\\\\Users\\\\selec\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-selec-fichas-tecnicas\\\\45de1af6-f860-48c5-b808-5d7f8fb0e323\\\\scratchpad\"/*.png \"C:\\\\Users\\\\selec\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-selec-fichas-tecnicas\\\\45de1af6-f860-48c5-b808-5d7f8fb0e323\\\\scratchpad\"/*.pdf 2>/dev/null; echo done)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\selec\\AppData\\Local\\Temp\\claude\\c--Users-selec-fichas-tecnicas\\45de1af6-f860-48c5-b808-5d7f8fb0e323\\scratchpad"
+    ]
+  }
+}

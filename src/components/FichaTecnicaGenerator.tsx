@@ -439,8 +439,117 @@ export default function FichaTecnicaGenerator() {
 
     return pageLines.join("\n");
   };
-  // ---------- Extraer fotos de PDF ----------
+  // ---------- Extraer fotos de PDF (imágenes embebidas reales) ----------
+  // Recorre la lista de operadores de cada página y recupera las imágenes tal como están
+  // incrustadas en el PDF, en vez de adivinar su ubicación por color de fondo. Esto es mucho
+  // más confiable para fotos de producto con fondo blanco/gris, que el detector de manchas
+  // por píxeles solía perder por confundir el propio producto con el fondo.
+  const extractEmbeddedPdfImage = (page: any, objId: string, timeoutMs = 4000): Promise<any> =>
+    new Promise((resolve) => {
+      if (page.objs.has(objId)) {
+        resolve(page.objs.get(objId));
+        return;
+      }
+      if (page.commonObjs.has(objId)) {
+        resolve(page.commonObjs.get(objId));
+        return;
+      }
+      let settled = false;
+      const finish = (value: any) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      page.objs.get(objId, finish);
+      page.commonObjs.get(objId, finish);
+      setTimeout(() => finish(null), timeoutMs);
+    });
+
+  const embeddedImageToDataUrl = (img: any, ImageKind: { RGBA_32BPP: number; RGB_24BPP: number }): string | null => {
+    if (!img || !img.width || !img.height) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    if (img.bitmap) {
+      ctx.drawImage(img.bitmap, 0, 0);
+      return canvas.toDataURL("image/png");
+    }
+
+    if (!img.data) return null;
+    const imageData = ctx.createImageData(img.width, img.height);
+    const src: Uint8ClampedArray = img.data;
+    if (img.kind === ImageKind.RGBA_32BPP) {
+      imageData.data.set(src);
+    } else if (img.kind === ImageKind.RGB_24BPP) {
+      for (let s = 0, d = 0; s < src.length; s += 3, d += 4) {
+        imageData.data[d] = src[s];
+        imageData.data[d + 1] = src[s + 1];
+        imageData.data[d + 2] = src[s + 2];
+        imageData.data[d + 3] = 255;
+      }
+    } else {
+      // 1bpp u otros formatos poco comunes para fotos: se omiten para no generar imágenes corruptas.
+      return null;
+    }
+    ctx.putImageData(imageData, 0, 0);
+    return canvas.toDataURL("image/png");
+  };
+
   const extractPdfPhotos = async (buffer: ArrayBuffer): Promise<string[]> => {
+    const pdfjsLib: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+    const stableBuffer = buffer.slice(0);
+    const doc = await pdfjsLib.getDocument({ data: stableBuffer }).promise;
+
+    type Candidate = { page: any; objId: string; width: number; height: number };
+    const candidates: Candidate[] = [];
+
+    for (let i = 1; i <= doc.numPages; i += 1) {
+      const page = await doc.getPage(i);
+      const opList = await page.getOperatorList();
+      for (let idx = 0; idx < opList.fnArray.length; idx += 1) {
+        if (opList.fnArray[idx] !== pdfjsLib.OPS.paintImageXObject) continue;
+        const [objId, width, height] = opList.argsArray[idx];
+        if (!width || !height || width < 90 || height < 90) continue;
+        const aspect = Math.max(width / height, height / width);
+        if (aspect > 5) continue; // descarta barras/logos muy alargados
+        candidates.push({ page, objId, width, height });
+      }
+    }
+
+    // Prioriza las imágenes más grandes: lo más probable es que sean la foto principal del producto.
+    candidates.sort((a, b) => b.width * b.height - a.width * a.height);
+
+    const photos: string[] = [];
+    const seen = new Set<string>();
+
+    for (const candidate of candidates) {
+      if (photos.length >= 6) break;
+      const key = `${candidate.width}x${candidate.height}`;
+      if (seen.has(key)) continue; // evita duplicar el mismo logo repetido en varias páginas
+      try {
+        const img = await extractEmbeddedPdfImage(candidate.page, candidate.objId);
+        const dataUrl = embeddedImageToDataUrl(img, pdfjsLib.ImageKind);
+        if (!dataUrl || dataUrl === "data:,") continue;
+        seen.add(key);
+        photos.push(dataUrl);
+      } catch {
+        // Si una imagen no se puede decodificar, se omite y se continúa con las demás.
+      }
+    }
+
+    if (photos.length > 0) return photos;
+
+    // Si el PDF no tiene imágenes embebidas legibles (p. ej. gráficos vectoriales), se recurre
+    // al detector heurístico anterior basado en análisis de píxeles renderizados.
+    return extractPdfPhotosHeuristic(buffer);
+  };
+
+  // ---------- Extraer fotos de PDF (heurística de respaldo por análisis de píxeles) ----------
+  const extractPdfPhotosHeuristic = async (buffer: ArrayBuffer): Promise<string[]> => {
     const pdfjsLib: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
     pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
     const stableBuffer = buffer.slice(0);
