@@ -7,7 +7,7 @@ import FichaBody from "./FichaBody";
 import FichaFooter from "./FichaFooter";
 
 type Spec = { k: string; v: string; img: string | null };
-
+// Lista de meses en español para formatear la fecha en la ficha técnica.
 const MESES = [
   "enero", "febrero", "marzo", "abril", "mayo", "junio",
   "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
@@ -17,6 +17,7 @@ const CONTACTO_DEFAULT = "info@selec.cl · selec.cl";
 const EMPRESA_DEFAULT = "SELEC";
 
 export default function FichaTecnicaGenerator() {
+  // ---------- Estados ----------
   const [empresa, setEmpresa] = useState(EMPRESA_DEFAULT);
   const [titulo, setTitulo] = useState("");
   const [marca, setMarca] = useState("");
@@ -25,7 +26,6 @@ export default function FichaTecnicaGenerator() {
   const [desc, setDesc] = useState("");
   const [notas, setNotas] = useState("");
   const [contacto, setContacto] = useState(CONTACTO_DEFAULT);
-
   const [logo, setLogo] = useState<string | null>(defaultLogo.src);
   const [photos, setPhotos] = useState<string[]>([]);
   const [specs, setSpecs] = useState<Spec[]>([
@@ -56,7 +56,12 @@ export default function FichaTecnicaGenerator() {
       r.readAsDataURL(f);
     });
 
+  // ---------- Fotos ----------
   const addPhoto = (dataUrl: string) => setPhotos((prev) => [...prev, dataUrl]);
+
+  const removePhoto = (index: number) => {
+    setPhotos((prev) => prev.filter((_, i) => i !== index));
+  };
 
   // ---------- Pegar (Ctrl+V) imágenes ----------
   // Si el foco está en un campo "Valor" de una spec -> la imagen va a esa spec.
@@ -98,7 +103,7 @@ export default function FichaTecnicaGenerator() {
     if (!f) return;
     setLogo(await readFile(f));
   };
-
+  // Si el foco está en un campo "Valor" de una spec -> la imagen va a esa spec.
   const onPhotos = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
     for (const f of files) addPhoto(await readFile(f));
@@ -130,7 +135,7 @@ export default function FichaTecnicaGenerator() {
     a.click();
     URL.revokeObjectURL(a.href);
   };
-
+  // ------------ Leer archivo JSON de ficha técnica ----------
   const readArrayBuffer = (f: File): Promise<ArrayBuffer> =>
     new Promise((resolve, reject) => {
       const r = new FileReader();
@@ -168,7 +173,7 @@ export default function FichaTecnicaGenerator() {
     setPhotos(Array.isArray(d.photos) ? d.photos.slice() : []);
     setLogo(d.logo ?? defaultLogo.src);
   };
-
+  // ---------- Importar JSON de ficha técnica ----------
   const importJsonFile = (f: File) => {
     const r = new FileReader();
     r.onload = () => {
@@ -188,7 +193,7 @@ export default function FichaTecnicaGenerator() {
     normalized = normalized.replace(/^(p[áa]gina|page)\s*\d+$/i, "");
     return normalized;
   };
-
+  // ---------- Extraer descripción del producto ----------
   const extractDescriptionFromLines = (lines: string[]) => {
     const descriptionLabelIndex = lines.findIndex((line) => /^descripc(i|ó)n/i.test(line));
     const candidateLines = descriptionLabelIndex >= 0
@@ -267,7 +272,6 @@ export default function FichaTecnicaGenerator() {
     const value = (match[1] ?? line.replace(regex, "")).trim();
     return value.replace(/^[:\-–—]\s*/, "").trim();
   };
-
   const scoreTitleCandidate = (line: string, index: number, total: number) => {
     const normalized = line.toLowerCase();
     let score = 0;
@@ -301,6 +305,7 @@ export default function FichaTecnicaGenerator() {
     return !/[;:]{2,}/.test(normalized);
   };
 
+  // ---------- Extraer campos de texto de PDF ----------
   const extractFieldValueFromLines = (lines: string[], labelPatterns: RegExp[]) => {
     const candidates: Array<{ value: string; score: number }> = [];
 
@@ -331,18 +336,19 @@ export default function FichaTecnicaGenerator() {
     const ranked = candidates.sort((a, b) => b.score - a.score);
     return ranked[0]?.value || "";
   };
-
+  // ---------- Extraer código de documento (docCode) ----------
   const extractCodeValueFromLines = (lines: string[]) => {
     const candidates: Array<{ value: string; score: number }> = [];
     lines.forEach((line, index) => {
       const normalized = cleanPdfLine(line);
       if (!normalized) return;
-
+      // Busca un patrón directo de código de documento, como "FT-1234" o "FT 1234", en la misma línea.
       const directMatch = normalized.match(/\b(FT[-\s]?\d+)\b/i);
       if (directMatch) {
         candidates.push({ value: directMatch[1].toUpperCase().replace(/\s+/g, "-"), score: 20 + (index <= 6 ? 4 : 0) });
       }
 
+      // Busca la etiqueta "código", "codigo", "ref", "referencia" o "n°" seguida de un valor en la misma línea o en la siguiente línea.
       const codeLabelMatch = normalized.match(/^(?:c[oó]digo|codigo|ref(?:erencia)?|n[°º]?)\b[^\w]*(.*)$/i);
       if (codeLabelMatch?.[2]) {
         const value = codeLabelMatch[2].trim().replace(/^[:\-–—\s]+/, "");
@@ -363,7 +369,7 @@ export default function FichaTecnicaGenerator() {
     const ranked = candidates.sort((a, b) => b.score - a.score);
     return ranked[0]?.value || "";
   };
-
+  // ---------- Extraer especificaciones técnicas (specs) ----------
   const extractSpecLine = (line: string): Spec | null => {
     const normalized = cleanPdfLine(line);
     if (!normalized || normalized.length < 3) return null;
@@ -391,6 +397,7 @@ export default function FichaTecnicaGenerator() {
     return null;
   };
 
+  // ---------- Analizar texto de PDF con IA ----------
   const parsePdfText = async (buffer: ArrayBuffer): Promise<string> => {
     const pdfjsLib: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
     pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
@@ -432,37 +439,78 @@ export default function FichaTecnicaGenerator() {
 
     return pageLines.join("\n");
   };
-
+  // ---------- Extraer fotos de PDF ----------
   const extractPdfPhotos = async (buffer: ArrayBuffer): Promise<string[]> => {
     const pdfjsLib: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
     pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
     const stableBuffer = buffer.slice(0);
     const doc = await pdfjsLib.getDocument({ data: stableBuffer }).promise;
     const photos: string[] = [];
-
+    // Analizar cada página del PDF para detectar regiones de interés (candidatos a fotos)
     for (let i = 1; i <= doc.numPages; i += 1) {
       const page = await doc.getPage(i);
       const viewport = page.getViewport({ scale: 1.6 });
       const canvas = document.createElement("canvas");
       const context = canvas.getContext("2d");
-
       if (!context) continue;
 
       canvas.width = Math.ceil(viewport.width);
       canvas.height = Math.ceil(viewport.height);
       await page.render({ canvasContext: context, viewport }).promise;
-
+      // Analizar la imagen renderizada para detectar regiones de interés (candidatos a fotos)
       const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
       const data = imageData.data;
       const visited = new Uint8Array(canvas.width * canvas.height);
-      const candidates: Array<{ x: number; y: number; width: number; height: number; area: number }> = [];
-
+      const candidates: Array<{ x: number; y: number; width: number; height: number; area: number; edgeCoverage: number; centrality: number }> = [];
+      const fallbackCandidates: Array<{ x: number; y: number; width: number; height: number; area: number; edgeCoverage: number; centrality: number }> = [];
+      // Función para determinar si un píxel es de fondo (blanco, gris o transparente)
       const isBackgroundPixel = (index: number) => {
         const r = data[index];
         const g = data[index + 1];
         const b = data[index + 2];
         const a = data[index + 3];
-        return a < 40 || (r > 240 && g > 240 && b > 240);
+        const isWhite = r > 235 && g > 235 && b > 235;
+        const isGray = Math.abs(r - g) < 12 && Math.abs(g - b) < 12 && r > 180 && r < 230;
+        return a < 40 || isWhite || isGray;
+      };
+
+      const createPhotoFromRegion = (x: number, y: number, width: number, height: number) => {
+        const cropCanvas = document.createElement("canvas");
+        const cropContext = cropCanvas.getContext("2d");
+        if (!cropContext) return null;
+
+        const safeX = Math.max(0, Math.min(x, canvas.width - 1));
+        const safeY = Math.max(0, Math.min(y, canvas.height - 1));
+        const safeWidth = Math.max(40, Math.min(width, canvas.width - safeX));
+        const safeHeight = Math.max(40, Math.min(height, canvas.height - safeY));
+
+        cropCanvas.width = safeWidth;
+        cropCanvas.height = safeHeight;
+        cropContext.drawImage(canvas, safeX, safeY, safeWidth, safeHeight, 0, 0, safeWidth, safeHeight);
+
+        const cropData = cropContext.getImageData(0, 0, safeWidth, safeHeight).data;
+        let nonBackgroundPixels = 0;
+        for (let i = 0; i < cropData.length; i += 4) {
+          const a = cropData[i + 3];
+          const r = cropData[i];
+          const g = cropData[i + 1];
+          const b = cropData[i + 2];
+          const isWhite = r > 235 && g > 235 && b > 235;
+          const isGray = Math.abs(r - g) < 12 && Math.abs(g - b) < 12 && r > 180 && r < 230;
+          if (!(a < 40 || isWhite || isGray)) nonBackgroundPixels += 1;
+        }
+
+        const density = nonBackgroundPixels / Math.max(1, safeWidth * safeHeight);
+        if (density < 0.08) return null;
+
+        return cropCanvas.toDataURL("image/png");
+      };
+
+      const getPixelVariance = (index: number) => {
+        const r = data[index];
+        const g = data[index + 1];
+        const b = data[index + 2];
+        return Math.max(r, g, b) - Math.min(r, g, b);
       };
 
       for (let y = 0; y < canvas.height; y += 1) {
@@ -479,12 +527,18 @@ export default function FichaTecnicaGenerator() {
           let minY = y;
           let maxY = y;
           let area = 0;
+          let nonBackground = 0;
+          let edgeCoverage = 0;
 
           while (stack.length) {
             const [cx, cy] = stack.pop()!;
             const currentIndex = cy * canvas.width + cx;
             const currentPixel = currentIndex * 4;
             area += 1;
+            if (!isBackgroundPixel(currentPixel)) {
+              nonBackground += 1;
+              edgeCoverage += getPixelVariance(currentPixel);
+            }
             minX = Math.min(minX, cx);
             maxX = Math.max(maxX, cx);
             minY = Math.min(minY, cy);
@@ -512,21 +566,57 @@ export default function FichaTecnicaGenerator() {
           const width = maxX - minX + 1;
           const height = maxY - minY + 1;
           const bboxArea = width * height;
-          if (area >= 2000 && width >= 24 && height >= 24 && bboxArea >= 4000 && width / height <= 4 && height / width <= 4) {
-            candidates.push({ x: minX, y: minY, width, height, area });
+          const density = nonBackground / Math.max(area, 1);
+          const contrast = edgeCoverage / Math.max(nonBackground, 1);
+          const aspect = Math.max(width / height, height / width);
+          const centerX = (minX + maxX) / (2 * canvas.width);
+          const centerY = (minY + maxY) / (2 * canvas.height);
+          const centrality = 1 - Math.min(1, Math.abs(centerX - 0.5) * 1.4 + Math.abs(centerY - 0.5) * 1.4);
+          const isHeaderLike = minY < canvas.height * 0.18 || maxY > canvas.height * 0.82;
+          const isWideBanner = width > canvas.width * 0.65 || height > canvas.height * 0.65;
+          const strictMatch =
+            area >= 3200 &&
+            width >= 60 &&
+            height >= 60 &&
+            bboxArea >= 8000 &&
+            density >= 0.3 &&
+            contrast >= 24 &&
+            aspect <= 2.8 &&
+            !isHeaderLike &&
+            !isWideBanner &&
+            centrality >= 0.25;
+
+          const fallbackMatch =
+            area >= 1400 &&
+            width >= 36 &&
+            height >= 36 &&
+            bboxArea >= 3600 &&
+            density >= 0.18 &&
+            contrast >= 12 &&
+            aspect <= 4.2 &&
+            !isHeaderLike &&
+            !isWideBanner &&
+            centrality >= 0.1;
+
+          if (strictMatch) {
+            candidates.push({ x: minX, y: minY, width, height, area, edgeCoverage: contrast, centrality });
+          } else if (fallbackMatch) {
+            fallbackCandidates.push({ x: minX, y: minY, width, height, area, edgeCoverage: contrast, centrality });
           }
         }
       }
-
-      candidates.sort((a, b) => b.area - a.area);
+      // Ordenar los candidatos por una puntuación compuesta de edgeCoverage, area y centrality
+      candidates.sort((a, b) => (b.edgeCoverage * 0.5 + b.area * 0.2 + b.centrality * 0.3) - (a.edgeCoverage * 0.5 + a.area * 0.2 + a.centrality * 0.3));
+      fallbackCandidates.sort((a, b) => (b.edgeCoverage * 0.5 + b.area * 0.2 + b.centrality * 0.3) - (a.edgeCoverage * 0.5 + a.area * 0.2 + a.centrality * 0.3));
       const seen = new Set<string>();
+      const selectedCandidates = candidates.length ? candidates : fallbackCandidates;
 
-      for (const candidate of candidates.slice(0, 6)) {
+      for (const candidate of selectedCandidates.slice(0, 6)) {
         const cropCanvas = document.createElement("canvas");
         const cropContext = cropCanvas.getContext("2d");
         if (!cropContext) continue;
 
-        const padding = 8;
+        const padding = 10;
         const cropX = Math.max(0, candidate.x - padding);
         const cropY = Math.max(0, candidate.y - padding);
         const cropWidth = Math.min(canvas.width - cropX, candidate.width + padding * 2);
@@ -545,11 +635,46 @@ export default function FichaTecnicaGenerator() {
           }
         }
       }
+
+      if (photos.length === 0) {
+        const fallbackRegions = [
+          {
+            x: Math.floor(canvas.width * 0.12),
+            y: Math.floor(canvas.height * 0.16),
+            width: Math.floor(canvas.width * 0.76),
+            height: Math.floor(canvas.height * 0.58),
+          },
+          {
+            x: Math.floor(canvas.width * 0.16),
+            y: Math.floor(canvas.height * 0.12),
+            width: Math.floor(canvas.width * 0.68),
+            height: Math.floor(canvas.height * 0.54),
+          },
+          {
+            x: Math.floor(canvas.width * 0.20),
+            y: Math.floor(canvas.height * 0.20),
+            width: Math.floor(canvas.width * 0.60),
+            height: Math.floor(canvas.height * 0.48),
+          },
+        ];
+
+        for (const region of fallbackRegions) {
+          const dataUrl = createPhotoFromRegion(region.x, region.y, region.width, region.height);
+          if (dataUrl && dataUrl !== "data:,") {
+            const key = `${region.width}x${region.height}:${dataUrl.slice(0, 120)}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              photos.push(dataUrl);
+            }
+          }
+          if (photos.length >= 1) break;
+        }
+      }
     }
 
     return photos.filter((photo, index, self) => self.indexOf(photo) === index);
   };
-
+  // ---------- Extracción automática con IA ----------
   const extractWithAi = async (
     sourceText = lastPdfText,
     baseData?: Partial<{
@@ -568,7 +693,7 @@ export default function FichaTecnicaGenerator() {
   ) => {
     const text = sourceText?.trim();
     if (!text) return;
-
+    // Evitar que se ejecute si ya hay una extracción en curso
     const currentData = {
       empresa: baseData?.empresa ?? empresa,
       titulo: baseData?.titulo ?? titulo,
@@ -584,20 +709,19 @@ export default function FichaTecnicaGenerator() {
     };
 
     setIsAiLoading(true);
-    setAiNotice("Analizando el PDF y completando los datos...");
-
+    // Llamar a la API de extracción con IA
     try {
       const response = await fetch("/api/ai-extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, currentData }),
       });
-
+      // Analizar la respuesta de la API
       const payload = await response.json();
       if (!response.ok) {
         throw new Error(payload.error || "No se pudo analizar el PDF con IA.");
       }
-
+      // Merge the extracted data with the current data, giving priority to the extracted values
       const nextData = {
         empresa: payload.empresa || currentData.empresa || EMPRESA_DEFAULT,
         titulo: payload.titulo || currentData.titulo || "",
@@ -611,11 +735,10 @@ export default function FichaTecnicaGenerator() {
           ? payload.specs.map((s: { k?: string; v?: string; img?: string | null }) => ({ k: s.k || "", v: s.v || "", img: s.img || null }))
           : currentData.specs,
         logo: payload.logo ?? currentData.logo ?? defaultLogo.src,
-        photos: Array.isArray(payload.photos) ? payload.photos : currentData.photos,
+        photos: Array.isArray(payload.photos) && payload.photos.length > 0 ? payload.photos : currentData.photos,
       };
-
+      // Aplicar los datos extraídos con IA al estado del componente
       applyFichaData(nextData);
-      setAiNotice("Datos completados automáticamente.");
     } catch (error) {
       console.warn(error);
       setAiNotice("Se aplicó la extracción automática con los datos detectados.");
@@ -623,7 +746,7 @@ export default function FichaTecnicaGenerator() {
       setIsAiLoading(false);
     }
   };
-
+  // ---------- Importar PDF ----------
   const importPdfFile = async (f: File) => {
     try {
       const buffer = await readArrayBuffer(f);
@@ -643,7 +766,7 @@ export default function FichaTecnicaGenerator() {
         titleCandidates,
         scoreTitleCandidate
       ) || (titleMarker >= 0 ? lines[titleMarker + 1] || "" : "");
-
+      // Extraer campos principales del texto
       const extractedFromText = extractCoreFieldsFromText(rawText);
       const marca = extractedFromText.marca || extractFieldValueFromLines(lines, [/^marca\b/i, /^fabricante\b/i, /^brand\b/i]);
       const modelo = extractedFromText.modelo || extractFieldValueFromLines(lines, [/^modelo\b/i, /^referencia\b/i, /^part\s*number\b/i, /^c[oó]digo\b/i, /^codigo\b/i]);
@@ -651,7 +774,6 @@ export default function FichaTecnicaGenerator() {
       const contactLine = findBestLine(lines, (line) => /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/.test(line));
       const websiteLine = findBestLine(lines, (line) => /\b(?:selec\.cl|www\.selec\.cl)\b/i.test(line));
       const contactoPdf = [contactLine, websiteLine].filter(Boolean).join(" · ") || extractedFromText.contacto || CONTACTO_DEFAULT;
-
       const specsStart = lines.findIndex((line) => /caracter[ií]sticas? t[eé]cnicas?/i.test(line));
       const notesIndex = lines.findIndex((line) => /(notas?|observaciones?)/i.test(line));
       const descStart = lines.findIndex((line) => /descripc(i|ó)n/i.test(line));
@@ -667,15 +789,15 @@ export default function FichaTecnicaGenerator() {
           .filter((line) => !/^(marca|modelo|fabricante|código|codigo|referencia|descripción|descripcion|características técnicas|caracteristicas tecnicas|notas|observaciones)/i.test(line))
           .join(" ");
       }
-
+      // Extraer las especificaciones técnicas
       const specsBlock = specsStart >= 0 ? lines.slice(specsStart + 1, notesIndex >= 0 ? notesIndex : lines.length) : [];
       const specs = specsBlock
         .map((line) => extractSpecLine(line))
         .filter((spec): spec is Spec => spec !== null)
         .slice(0, 8);
-
+      // Extraer las notas
       const notes = notesIndex >= 0 ? lines.slice(notesIndex + 1).join(" ") : "";
-
+      // Construir el objeto de datos heurísticos
       const heuristicData = {
         empresa: EMPRESA_DEFAULT,
         titulo: extractedFromText.titulo || title,
@@ -689,7 +811,7 @@ export default function FichaTecnicaGenerator() {
         logo: defaultLogo.src,
         photos: extractedPhotos,
       };
-
+      // Aplicar los datos heurísticos al estado del componente
       applyFichaData(heuristicData);
       setLastPdfText(rawText);
       await extractWithAi(rawText, heuristicData);
@@ -698,7 +820,7 @@ export default function FichaTecnicaGenerator() {
       alert("No se pudo leer el PDF. Asegúrate de que sea una ficha técnica válida.");
     }
   };
-
+  // --------- Importar JSON ----------
   const importFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -709,9 +831,8 @@ export default function FichaTecnicaGenerator() {
     }
     e.target.value = "";
   };
-
+  // ---------- Renderizado ----------
   const nPhotos = photos.length;
-
   return (
     <>
       <div className="topbar">
@@ -763,7 +884,7 @@ export default function FichaTecnicaGenerator() {
                   <button
                     className="rm"
                     title="Quitar"
-                    onClick={() => setPhotos((prev) => prev.filter((_, i) => i !== idx))}
+                    onClick={() => removePhoto(idx)}
                   >×</button>
                 </div>
               ))}
@@ -805,22 +926,42 @@ export default function FichaTecnicaGenerator() {
           <h2>Características técnicas</h2>
           <div>
             {specs.map((s, idx) => (
-              <div className="spec-row" key={idx}>
-                <input
-                  className="k"
-                  type="text"
-                  placeholder="Característica (ej: Tensión bobina)"
-                  value={s.k}
-                  onChange={(e) => updateSpec(idx, { k: e.target.value })}
-                />
-                <input
-                  className={`v${s.img ? " has-img" : ""}`}
-                  type="text"
-                  data-spec-idx={idx}
-                  placeholder={s.img ? "🖼 imagen pegada — texto opcional" : "Valor (texto o pega imagen con Ctrl+V)"}
-                  value={s.v}
-                  onChange={(e) => updateSpec(idx, { v: e.target.value })}
-                />
+              <div className={`spec-row${s.img ? " spec-row-image" : ""}`} key={idx}>
+                {s.img ? (
+                  <div className="spec-image-field" data-spec-idx={idx} tabIndex={0}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={s.img} alt="" />
+                    <input
+                      type="text"
+                      placeholder="Descripción de la imagen (opcional)"
+                      value={s.v}
+                      onChange={(e) => updateSpec(idx, { v: e.target.value })}
+                    />
+                    <button
+                      className="clear-img"
+                      title="Quitar imagen"
+                      onClick={() => updateSpec(idx, { img: null })}
+                    >×</button>
+                  </div>
+                ) : (
+                  <>
+                    <input
+                      className="k"
+                      type="text"
+                      placeholder="Característica (ej: Tensión bobina)"
+                      value={s.k}
+                      onChange={(e) => updateSpec(idx, { k: e.target.value })}
+                    />
+                    <input
+                      className="v"
+                      type="text"
+                      data-spec-idx={idx}
+                      placeholder="Valor (texto o pega imagen con Ctrl+V)"
+                      value={s.v}
+                      onChange={(e) => updateSpec(idx, { v: e.target.value })}
+                    />
+                  </>
+                )}
                 <button className="del" title="Eliminar fila" onClick={() => removeSpec(idx)}>×</button>
               </div>
             ))}
@@ -959,13 +1100,30 @@ export default function FichaTecnicaGenerator() {
         .spec-row .k { flex: 1.1; }
         .spec-row .v { flex: 1; }
         .spec-row input:focus { outline: none; border-color: var(--amber); }
-        .spec-row input.has-img { border-color: var(--amber); color: var(--amber); }
         .spec-row .del {
           width: 26px; height: 26px; flex-shrink: 0; background: none;
           border: 1px solid var(--editor-line); color: var(--editor-muted);
           cursor: pointer; font-size: 14px; line-height: 1;
         }
         .spec-row .del:hover { border-color: #c0392b; color: #e74c3c; }
+        .spec-row-image { align-items: stretch; }
+        .spec-image-field {
+          flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0;
+          padding: 6px; background: var(--editor-bg); border: 1px solid var(--amber);
+        }
+        .spec-image-field img {
+          width: 40px; height: 40px; object-fit: cover; flex-shrink: 0; border-radius: 2px;
+        }
+        .spec-image-field input {
+          flex: 1; min-width: 0; padding: 6px 8px; background: transparent; border: none;
+          color: var(--editor-text); font-size: 12.5px; font-family: var(--font-archivo), sans-serif;
+        }
+        .spec-image-field input:focus { outline: none; }
+        .spec-image-field .clear-img {
+          flex-shrink: 0; width: 22px; height: 22px; background: none; border: 1px solid var(--editor-line);
+          color: var(--editor-muted); cursor: pointer; font-size: 13px; line-height: 1;
+        }
+        .spec-image-field .clear-img:hover { border-color: #c0392b; color: #e74c3c; }
         .add-spec {
           width: 100%; padding: 8px; margin-top: 4px; background: none;
           border: 1px dashed var(--editor-line); color: var(--editor-muted);
@@ -1014,11 +1172,11 @@ export default function FichaTecnicaGenerator() {
           display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
         }
         .ft-specs-title::after { content: ""; flex: 1; height: 2px; background: var(--ink); }
-        table.ft-specs { width: 100%; border-collapse: collapse; }
-        table.ft-specs td { padding: 7px 12px; font-size: 12.5px; border-bottom: 1px solid var(--line); vertical-align: top; }
+        table.ft-specs { width: 100%; border-collapse: collapse; table-layout: fixed; }
+        table.ft-specs td { padding: 7px 12px; font-size: 12.5px; border-bottom: 1px solid var(--line); vertical-align: top; overflow: hidden; }
         table.ft-specs td.k { width: 46%; color: #3c434b; font-weight: 500; }
         table.ft-specs td.v { font-family: var(--font-mono), monospace; font-weight: 500; font-size: 12px; }
-        table.ft-specs td.v img { max-width: 100%; max-height: 120px; object-fit: contain; display: block; }
+        table.ft-specs td.v-image { width: 100%; }
         table.ft-specs tr:nth-child(odd) td { background: #f7f8f9; }
         .ft-notes {
           font-size: 11px; color: var(--steel); line-height: 1.55;

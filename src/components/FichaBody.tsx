@@ -1,3 +1,4 @@
+// Componente que representa el cuerpo de la ficha técnica, incluyendo título, marca, modelo, descripción, fotos, especificaciones y notas.
 type FichaBodyProps = {
   titulo: string;
   marca: string;
@@ -7,7 +8,7 @@ type FichaBodyProps = {
   specs: Array<{ k: string; v: string; img: string | null }>;
   notes?: string;
 };
-
+// Componente que representa el cuerpo de la ficha técnica, incluyendo título, marca, modelo, descripción, fotos, especificaciones y notas.
 export default function FichaBody({
   titulo,
   marca,
@@ -54,18 +55,20 @@ export default function FichaBody({
                 .filter((s) => s.k.trim() || s.v.trim() || s.img)
                 .map((s, idx) => (
                   <tr key={idx}>
-                    <td className="k">{s.k}</td>
-                    <td className="v">
-                      {s.img ? (
-                        <>
+                    {s.img ? (
+                      <td className="v-image" colSpan={2}>
+                        <div className="spec-image-wrap">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={s.img} alt={s.k || ""} />
-                          {s.v && <div style={{ marginTop: 4 }}>{s.v}</div>}
-                        </>
-                      ) : (
-                        s.v
-                      )}
-                    </td>
+                          <img src={s.img} alt={s.k || s.v || ""} />
+                          {s.v && <div className="spec-image-caption">{s.v}</div>}
+                        </div>
+                      </td>
+                    ) : (
+                      <>
+                        <td className="k">{s.k}</td>
+                        <td className="v">{s.v}</td>
+                      </>
+                    )}
                   </tr>
                 ))}
             </tbody>
@@ -74,6 +77,32 @@ export default function FichaBody({
       )}
 
       {notes && <div className="ft-notes">{notes}</div>}
+
+      <style jsx>{`
+        .spec-image-wrap {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 6px;
+          width: 100%;
+        }
+        .spec-image-wrap img {
+          width: auto;
+          max-width: 100%;
+          height: auto;
+          max-height: 260px;
+          object-fit: contain;
+          display: block;
+          margin: 0 auto;
+          border-radius: 4px;
+        }
+        .spec-image-caption {
+          font-size: 11px;
+          color: #5c6670;
+          line-height: 1.4;
+          text-align: center;
+        }
+      `}</style>
     </>
   );
 }

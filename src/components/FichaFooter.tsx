@@ -1,3 +1,4 @@
+// Componente que representa el pie de página de la ficha técnica, mostrando la empresa, el contacto y la fecha 
 type FichaFooterProps = {
   empresa: string;
   contacto: string;
