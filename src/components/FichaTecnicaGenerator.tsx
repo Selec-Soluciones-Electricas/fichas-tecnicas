@@ -16,27 +16,68 @@ const MESES = [
 // Valores por defecto para contacto y empresa si no se proporcionan.
 const CONTACTO_DEFAULT = "info@selec.cl · selec.cl";
 const EMPRESA_DEFAULT = "SELEC";
+// Clave usada para guardar el progreso en localStorage y no perderlo al recargar la página.
+const STORAGE_KEY = "fichaTecnicaGenerator:data";
+
+type StoredFicha = Partial<{
+  empresa: string;
+  titulo: string;
+  marca: string;
+  modelo: string;
+  docCode: string;
+  desc: string;
+  notas: string;
+  contacto: string;
+  specs: Spec[];
+  logo: string | null;
+  photos: string[];
+}>;
+
+// Se cachea en el módulo para leer y parsear localStorage una sola vez, aunque varios
+// useState la consulten en su inicializador durante el primer render.
+let cachedStoredFicha: StoredFicha | null | undefined;
+const getStoredFicha = (): StoredFicha | null => {
+  if (cachedStoredFicha !== undefined) return cachedStoredFicha;
+  let result: StoredFicha | null = null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    result = raw ? JSON.parse(raw) : null;
+  } catch {
+    result = null;
+  }
+  cachedStoredFicha = result;
+  return result;
+};
+
 // Componente principal el cual se declaran los estados y funciones para manejar la ficha técnica, exportando el componente FichaHeader, FichaBody y FichaFooter.
 export default function FichaTecnicaGenerator() {
-  // ---------- Estados ----------
-  const [empresa, setEmpresa] = useState(EMPRESA_DEFAULT);
-  const [titulo, setTitulo] = useState("");
-  const [marca, setMarca] = useState("");
-  const [modelo, setModelo] = useState("");
-  const [docCode, setDocCode] = useState("");
-  const [desc, setDesc] = useState("");
-  const [notas, setNotas] = useState("");
-  const [contacto, setContacto] = useState(CONTACTO_DEFAULT);
-  const [logo, setLogo] = useState<string | null>(defaultLogo.src);
-  const [photos, setPhotos] = useState<string[]>([]);
-  
-  const [specs, setSpecs] = useState<Spec[]>
-  ([
-    { k: "", v: "", img: null },
-    { k: "", v: "", img: null },
-    { k: "", v: "", img: null },]);
-  
-    const [lastPdfText, setLastPdfText] = useState("");
+  // ---------- Estados (se restauran desde localStorage si hay algo guardado) ----------
+  const [empresa, setEmpresa] = useState(() => getStoredFicha()?.empresa || EMPRESA_DEFAULT);
+  const [titulo, setTitulo] = useState(() => getStoredFicha()?.titulo || "");
+  const [marca, setMarca] = useState(() => getStoredFicha()?.marca || "");
+  const [modelo, setModelo] = useState(() => getStoredFicha()?.modelo?.trim() || "");
+  const [docCode, setDocCode] = useState(() => getStoredFicha()?.docCode || "");
+  const [desc, setDesc] = useState(() => getStoredFicha()?.desc || "");
+  const [notas, setNotas] = useState(() => getStoredFicha()?.notas || "");
+  const [contacto, setContacto] = useState(() => getStoredFicha()?.contacto || CONTACTO_DEFAULT);
+  const [logo, setLogo] = useState<string | null>(() => getStoredFicha()?.logo ?? defaultLogo.src);
+  const [photos, setPhotos] = useState<string[]>(() => {
+    const stored = getStoredFicha()?.photos;
+    return Array.isArray(stored) ? stored.slice() : [];
+  });
+
+  const [specs, setSpecs] = useState<Spec[]>(() => {
+    const stored = getStoredFicha()?.specs;
+    return Array.isArray(stored) && stored.length
+      ? stored.map((s) => ({ k: s.k || "", v: s.v || "", img: s.img || null }))
+      : [
+          { k: "", v: "", img: null },
+          { k: "", v: "", img: null },
+          { k: "", v: "", img: null },
+        ];
+  });
+
+  const [lastPdfText, setLastPdfText] = useState("");
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiNotice, setAiNotice] = useState("");
   const fecha = useMemo(() => {
@@ -158,6 +199,12 @@ export default function FichaTecnicaGenerator() {
   // En cualquier otro caso -> se agrega a las fotos.
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
+      // Si el portapapeles trae texto (aunque también incluya una miniatura/imagen, algo
+      // común al copiar desde Word, Excel o un PDF), se prioriza el texto y se deja que el
+      // navegador lo pegue de forma nativa, tal cual fue copiado.
+      const text = e.clipboardData?.getData("text/plain") ?? "";
+      if (text.trim()) return;
+
       const items = e.clipboardData?.items ?? [];
       let file: File | null = null;
       for (let i = 0; i < items.length; i++) {
@@ -235,19 +282,7 @@ export default function FichaTecnicaGenerator() {
       r.readAsArrayBuffer(f);
     });
 
-  const applyFichaData = (d: Partial<{
-    empresa: string;
-    titulo: string;
-    marca: string;
-    modelo: string;
-    docCode: string;
-    desc: string;
-    notas: string;
-    contacto: string;
-    specs: Spec[];
-    logo: string | null;
-    photos: string[];
-  }>) => {
+  const applyFichaData = (d: StoredFicha) => {
     setEmpresa(d.empresa || EMPRESA_DEFAULT);
     setTitulo(d.titulo || "");
     setMarca(d.marca || "");
@@ -264,6 +299,49 @@ export default function FichaTecnicaGenerator() {
     setPhotos(Array.isArray(d.photos) ? d.photos.slice() : []);
     setLogo(d.logo ?? defaultLogo.src);
   };
+
+  // ---------- Persistencia local (evita perder los datos al recargar la página) ----------
+  // El estado inicial ya se restaura desde localStorage en los useState de más arriba;
+  // acá solo se guarda automáticamente cada cambio (con un pequeño debounce).
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      try {
+        const data = { empresa, titulo, marca, modelo, docCode, desc, notas, contacto, specs, logo, photos };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      } catch {
+        console.warn("No se pudo guardar el progreso automáticamente (posiblemente por el tamaño de las imágenes).");
+      }
+    }, 400);
+    return () => clearTimeout(timeout);
+  }, [empresa, titulo, marca, modelo, docCode, desc, notas, contacto, specs, logo, photos]);
+
+  // ---------- Limpiar ficha ----------
+  const clearFicha = () => {
+    if (!window.confirm("¿Seguro que deseas limpiar la ficha? Se perderán todos los datos ingresados.")) return;
+    setEmpresa(EMPRESA_DEFAULT);
+    setTitulo("");
+    setMarca("");
+    setModelo("");
+    setDocCode("");
+    setDesc("");
+    setNotas("");
+    setContacto(CONTACTO_DEFAULT);
+    setLogo(defaultLogo.src);
+    setPhotos([]);
+    setSpecs([
+      { k: "", v: "", img: null },
+      { k: "", v: "", img: null },
+      { k: "", v: "", img: null },
+    ]);
+    setLastPdfText("");
+    setAiNotice("");
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // Ignorar si localStorage no está disponible.
+    }
+  };
+
   // ---------- Importar JSON de ficha técnica ----------
   const importJsonFile = (f: File) => {
     const r = new FileReader();
@@ -1041,6 +1119,7 @@ export default function FichaTecnicaGenerator() {
             Importar datos
             <input type="file" accept=".json,.pdf" onChange={importFile} style={{ display: "none" }} />
           </label>
+          <button className="btn" onClick={clearFicha}>Limpiar ficha</button>
           <button className="btn primary" onClick={downloadPdf}>Descargar PDF</button>
         </div>
       </div>
