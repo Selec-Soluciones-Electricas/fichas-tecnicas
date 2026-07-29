@@ -87,7 +87,8 @@ export default function FichaBody({
           width: 100%;
         }
         .spec-image-wrap img {
-          width: 100%;
+          width: auto;
+          max-width: 100%;
           height: auto;
           max-height: 1600px;
           object-fit: contain;

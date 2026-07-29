@@ -58,6 +58,94 @@ export default function FichaTecnicaGenerator() {
       r.readAsDataURL(f);
     });
 
+  // ---------- Recortar márgenes en blanco de capturas pegadas en características ----------
+  // Muchas capturas de pantalla traen bastante espacio vacío alrededor del contenido real.
+  // Al ajustar la imagen al ancho del recuadro, ese espacio también se agranda y la fila
+  // termina ocupando mucho más alto de lo que el contenido realmente necesita. Se recorta
+  // automáticamente el margen uniforme (tomando como referencia el color de la esquina)
+  // para que el tamaño final dependa del contenido, no del encuadre de la captura.
+  const trimImageWhitespace = (dataUrl: string): Promise<string> =>
+    new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const width = img.naturalWidth;
+        const height = img.naturalHeight;
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx || width === 0 || height === 0) {
+          resolve(dataUrl);
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+
+        let pixels: Uint8ClampedArray;
+        try {
+          pixels = ctx.getImageData(0, 0, width, height).data;
+        } catch {
+          resolve(dataUrl);
+          return;
+        }
+
+        const bgR = pixels[0];
+        const bgG = pixels[1];
+        const bgB = pixels[2];
+        const THRESHOLD = 12;
+        const isBackground = (x: number, y: number) => {
+          const i = (y * width + x) * 4;
+          return (
+            Math.abs(pixels[i] - bgR) <= THRESHOLD &&
+            Math.abs(pixels[i + 1] - bgG) <= THRESHOLD &&
+            Math.abs(pixels[i + 2] - bgB) <= THRESHOLD
+          );
+        };
+        const rowHasContent = (y: number) => {
+          for (let x = 0; x < width; x += 2) {
+            if (!isBackground(x, y)) return true;
+          }
+          return false;
+        };
+        const colHasContent = (x: number) => {
+          for (let y = 0; y < height; y += 2) {
+            if (!isBackground(x, y)) return true;
+          }
+          return false;
+        };
+
+        let top = 0, bottom = height - 1, left = 0, right = width - 1;
+        while (top < bottom && !rowHasContent(top)) top += 1;
+        while (bottom > top && !rowHasContent(bottom)) bottom -= 1;
+        while (left < right && !colHasContent(left)) left += 1;
+        while (right > left && !colHasContent(right)) right -= 1;
+
+        const PADDING = 14;
+        const cropX = Math.max(0, left - PADDING);
+        const cropY = Math.max(0, top - PADDING);
+        const cropW = Math.min(width, right + PADDING) - cropX;
+        const cropH = Math.min(height, bottom + PADDING) - cropY;
+
+        const reducedEnough = cropW < width * 0.98 || cropH < height * 0.98;
+        if (!reducedEnough || cropW < 20 || cropH < 20) {
+          resolve(dataUrl);
+          return;
+        }
+
+        const outCanvas = document.createElement("canvas");
+        outCanvas.width = cropW;
+        outCanvas.height = cropH;
+        const outCtx = outCanvas.getContext("2d");
+        if (!outCtx) {
+          resolve(dataUrl);
+          return;
+        }
+        outCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+        resolve(outCanvas.toDataURL("image/png"));
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    });
+
   // ---------- Fotos ----------
   const addPhoto = (dataUrl: string) => setPhotos((prev) => [...prev, dataUrl]);
 
@@ -84,11 +172,12 @@ export default function FichaTecnicaGenerator() {
       const active = document.activeElement as HTMLElement | null;
       const specIdxAttr = active?.dataset?.specIdx;
 
-      readFile(file).then((dataUrl) => {
+      readFile(file).then(async (dataUrl) => {
         if (specIdxAttr !== undefined) {
           const idx = parseInt(specIdxAttr, 10);
+          const trimmed = await trimImageWhitespace(dataUrl);
           setSpecs((prev) =>
-            prev.map((s, i) => (i === idx ? { ...s, img: dataUrl } : s))
+            prev.map((s, i) => (i === idx ? { ...s, img: trimmed } : s))
           );
         } else {
           addPhoto(dataUrl);
@@ -1052,9 +1141,9 @@ export default function FichaTecnicaGenerator() {
                       value={s.k}
                       onChange={(e) => updateSpec(idx, { k: e.target.value })}
                     />
-                    <input
+                    <textarea
                       className="v"
-                      type="text"
+                      rows={1}
                       data-spec-idx={idx}
                       placeholder="Valor (texto o pega imagen con Ctrl+V)"
                       value={s.v}
@@ -1192,16 +1281,18 @@ export default function FichaTecnicaGenerator() {
           font-size: 13px; border-radius: 2px;
         }
         .thumb .rm:hover { background: #c0392b; }
-        .spec-row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
-        .spec-row input {
+        .spec-row { display: flex; gap: 6px; margin-bottom: 6px; align-items: flex-start; }
+        .spec-row input, .spec-row textarea.v {
           padding: 7px 9px; background: var(--editor-bg); border: 1px solid var(--editor-line);
           color: var(--editor-text); font-size: 12.5px; font-family: var(--font-archivo), sans-serif; min-width: 0;
         }
         .spec-row .k { flex: 1.1; }
-        .spec-row .v { flex: 1; }
-        .spec-row input:focus { outline: none; border-color: var(--amber); }
+        .spec-row textarea.v {
+          flex: 1; resize: vertical; min-height: 30px; max-height: 160px; line-height: 1.4;
+        }
+        .spec-row input:focus, .spec-row textarea.v:focus { outline: none; border-color: var(--amber); }
         .spec-row .del {
-          width: 26px; height: 26px; flex-shrink: 0; background: none;
+          width: 26px; height: 26px; flex-shrink: 0; align-self: flex-start; background: none;
           border: 1px solid var(--editor-line); color: var(--editor-muted);
           cursor: pointer; font-size: 14px; line-height: 1;
         }
@@ -1256,7 +1347,7 @@ export default function FichaTecnicaGenerator() {
         .ft-subtitle { font-family: var(--font-mono), monospace; font-size: 12.5px; color: var(--steel); display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 24px; }
         .ft-subtitle b { color: var(--ink); font-weight: 600; }
         .ft-body { display: flex; gap: 28px; margin-bottom: 26px; }
-        .ft-desc { flex: 1.15; font-size: 13.5px; line-height: 1.62; color: #33383e; white-space: pre-line; }
+        .ft-desc { flex: 1.15; font-size: 13.5px; line-height: 1.62; color: #33383e; white-space: pre-line; text-align: justify; text-align-last: left; }
         .ft-photos { flex: 1; display: grid; gap: 8px; align-content: start; grid-template-columns: 1fr; }
         .ft-photos.n2, .ft-photos.n3, .ft-photos.n4 { grid-template-columns: 1fr 1fr; }
         .ft-photo {
@@ -1275,7 +1366,7 @@ export default function FichaTecnicaGenerator() {
         table.ft-specs { width: 100%; border-collapse: collapse; table-layout: fixed; }
         table.ft-specs td { padding: 7px 12px; font-size: 12.5px; border-bottom: 1px solid var(--line); vertical-align: top; overflow: hidden; }
         table.ft-specs td.k { width: 46%; color: #3c434b; font-weight: 500; }
-        table.ft-specs td.v { font-family: var(--font-mono), monospace; font-weight: 500; font-size: 12px; }
+        table.ft-specs td.v { font-family: var(--font-mono), monospace; font-weight: 500; font-size: 12px; white-space: pre-line; }
         table.ft-specs td.v-image { width: 100%; }
         table.ft-specs tr:nth-child(odd) td { background: #f7f8f9; }
         .ft-notes {
