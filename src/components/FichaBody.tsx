@@ -1,4 +1,3 @@
-// Componente que representa el cuerpo de la ficha técnica, incluyendo título, marca, modelo, descripción, fotos, especificaciones y notas.
 type FichaBodyProps = {
   titulo: string;
   marca: string;
@@ -8,7 +7,6 @@ type FichaBodyProps = {
   specs: Array<{ k: string; v: string; img: string | null }>;
   notes?: string;
 };
-// Componente que representa el cuerpo de la ficha técnica, incluyendo título, marca, modelo, descripción, fotos, especificaciones y notas.
 export default function FichaBody({
   titulo,
   marca,
@@ -21,7 +19,6 @@ export default function FichaBody({
   const nPhotos = photos.length;
   const photosClass = `ft-photos n${nPhotos === 0 ? 1 : Math.min(nPhotos, 4)}`;
   const specsHasContent = specs.some((s) => s.k.trim() || s.v.trim() || s.img);
-
   return (
     <>
       <div className="ft-title">{titulo || "Título del producto"}</div>
@@ -38,7 +35,6 @@ export default function FichaBody({
           ) : (
             photos.map((src, idx) => (
               <div className="ft-photo" key={idx}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={src} alt={titulo || "Producto"} />
               </div>
             ))
@@ -58,7 +54,6 @@ export default function FichaBody({
                     {s.img ? (
                       <td className="v-image" colSpan={2}>
                         <div className="spec-image-wrap">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img src={s.img} alt={s.k || s.v || ""} />
                           {s.v && <div className="spec-image-caption">{s.v}</div>}
                         </div>

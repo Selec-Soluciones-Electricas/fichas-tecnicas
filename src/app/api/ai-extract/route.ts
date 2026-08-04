@@ -129,7 +129,6 @@ export async function POST(req: NextRequest) {
           });
         }
       } catch {
-        // Caer al fallback local si Ollama no está disponible.
       }
 
       return NextResponse.json({ ...fallback, ...currentData });

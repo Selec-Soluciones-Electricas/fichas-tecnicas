@@ -1,10 +1,8 @@
-// Prpops for the FichaHeader component
 type FichaHeaderProps = {
   logo: string | null;
   empresa: string;
   docCode: string;
 };
-// FichaHeader component that displays the header of the technical sheet
 export default function FichaHeader({ logo, empresa, docCode }: FichaHeaderProps) {
   return (
     <div className="ft-head">
