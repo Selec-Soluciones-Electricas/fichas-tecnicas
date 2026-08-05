@@ -1115,7 +1115,7 @@ export default function FichaTecnicaGenerator() {
               </div>
             ))}
           </div>
-          <button className="add-spec" onClick={addSpec}>+ Agregar característica</button>
+          <button className="add-spec" onClick={addSpec}>+ Agregar json</button>
           <div className="hint">
             Para pegar una imagen en una característica: haz clic en su campo <i>Valor</i> y pega con <b>Ctrl+V</b>.
           </div>
