@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import defaultLogo from "@/img/Alta resolución.jpg";
+import { normalizeDescHtml } from "@/lib/richText";
 import FichaHeader from "./FichaHeader";
 import FichaBody from "./FichaBody";
 import FichaFooter from "./FichaFooter";
@@ -13,6 +14,14 @@ const MESES = [
 const CONTACTO_DEFAULT = "info@selec.cl · selec.cl";
 const EMPRESA_DEFAULT = "SELEC";
 const STORAGE_KEY = "fichaTecnicaGenerator:data";
+const HIGHLIGHT_COLORS = [
+  { hex: "f5a800", label: "Ámbar" },
+  { hex: "fff59d", label: "Amarillo" },
+  { hex: "a5d6a7", label: "Verde" },
+  { hex: "81d4fa", label: "Celeste" },
+  { hex: "f48fb1", label: "Rosa" },
+  { hex: "ce93d8", label: "Morado" },
+];
 type StoredFicha = Partial<{
   empresa: string;
   titulo: string;
@@ -48,7 +57,8 @@ export default function FichaTecnicaGenerator() {
   const [marca, setMarca] = useState(() => getStoredFicha()?.marca || "");
   const [modelo, setModelo] = useState(() => getStoredFicha()?.modelo?.trim() || "");
   const [docCode, setDocCode] = useState(() => getStoredFicha()?.docCode || "");
-  const [desc, setDesc] = useState(() => getStoredFicha()?.desc || "");
+  const [desc, setDesc] = useState(() => normalizeDescHtml(getStoredFicha()?.desc || ""));
+  const [customHighlightColor, setCustomHighlightColor] = useState("f5a800");
   const [notas, setNotas] = useState(() => getStoredFicha()?.notas || "");
   const [contacto, setContacto] = useState(() => getStoredFicha()?.contacto || CONTACTO_DEFAULT);
   const [logo, setLogo] = useState<string | null>(() => getStoredFicha()?.logo ?? defaultLogo.src);
@@ -217,6 +227,51 @@ export default function FichaTecnicaGenerator() {
     setSpecs((prev) => prev.filter((_, i) => i !== idx));
   const addSpec = () =>
     setSpecs((prev) => [...prev, { k: "", v: "", img: null }]);
+  const descRef = useRef<HTMLDivElement>(null);
+  const syncDescFromDom = () => {
+    const el = descRef.current;
+    if (!el) return;
+    if (!(el.textContent || "").trim() && el.innerHTML !== "") {
+      el.innerHTML = "";
+    }
+    setDesc(el.innerHTML);
+  };
+  const execDescCommand = (command: string, value?: string) => {
+    const el = descRef.current;
+    if (!el) return;
+    el.focus();
+    try {
+      document.execCommand(command, false, value);
+    } catch {
+      // ignore unsupported command in this browser
+    }
+    syncDescFromDom();
+  };
+  const applyDescHighlight = (hex: string) => {
+    const color = `#${hex}`;
+    const el = descRef.current;
+    if (!el) return;
+    el.focus();
+    try {
+      if (!document.execCommand("hiliteColor", false, color)) {
+        document.execCommand("backColor", false, color);
+      }
+    } catch {
+      try {
+        document.execCommand("backColor", false, color);
+      } catch {
+        // ignore unsupported command in this browser
+      }
+    }
+    syncDescFromDom();
+  };
+  useEffect(() => {
+    const el = descRef.current;
+    if (!el) return;
+    if (document.activeElement !== el && el.innerHTML !== desc) {
+      el.innerHTML = desc;
+    }
+  }, [desc]);
   const downloadPdf = () => setTimeout(() => window.print(), 50);
   const exportJson = () => {
     const data = {
@@ -244,7 +299,7 @@ export default function FichaTecnicaGenerator() {
     setMarca(d.marca || "");
     setModelo(d.modelo?.trim() || "");
     setDocCode(d.docCode || "");
-    setDesc(d.desc || "");
+    setDesc(normalizeDescHtml(d.desc || ""));
     setNotas(d.notas || "");
     setContacto(d.contacto || CONTACTO_DEFAULT);
     setSpecs(
@@ -1069,10 +1124,57 @@ export default function FichaTecnicaGenerator() {
             <label>Código del documento (opcional)</label>
             <input type="text" value={docCode} onChange={(e) => setDocCode(e.target.value)} placeholder="Ej: FT-2026-0142" />
           </div>
+
+
+
           <div className="field">
             <label>Descripción</label>
-            <textarea value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Descripción general del producto, aplicación, características principales..." />
+            <div className="desc-toolbar">
+              <button type="button" title="Negrita" onClick={() => execDescCommand("bold")}><b>N</b></button>
+              <button type="button" title="Cursiva" onClick={() => execDescCommand("italic")}><i>I</i></button>
+              <button type="button" title="Lista con viñetas" onClick={() => execDescCommand("insertUnorderedList")}>☰</button>
+              <button type="button" title="Lista numerada" onClick={() => execDescCommand("insertOrderedList")}>1.</button>
+              <button type="button" title="Quitar formato" onClick={() => execDescCommand("removeFormat")}>✕</button>
+            </div>
+            <div className="desc-colors">
+              {HIGHLIGHT_COLORS.map((c) => (
+                <button
+                  key={c.hex}
+                  type="button"
+                  className="swatch"
+                  title={`Resaltar en ${c.label}`}
+                  style={{ background: `#${c.hex}` }}
+                  onClick={() => applyDescHighlight(c.hex)}
+                />
+              ))}
+              <input
+                type="color"
+                className="swatch swatch-custom"
+                title="Elegir otro color"
+                value={`#${customHighlightColor}`}
+                onChange={(e) => {
+                  const hex = e.target.value.replace("#", "");
+                  setCustomHighlightColor(hex);
+                  applyDescHighlight(hex);
+                }}
+              />
+            </div>
+            <div
+              ref={descRef}
+              className="desc-editable"
+              contentEditable
+              suppressContentEditableWarning
+              data-placeholder="Descripción general del producto, aplicación, características principales..."
+              onInput={syncDescFromDom}
+              onBlur={syncDescFromDom}
+            />
+            <div className="hint">
+              Selecciona texto y usa los botones para dar formato: negrita, cursiva, resaltado de color y listas.
+            </div>
           </div>
+
+
+          
           <h2>Características técnicas</h2>
           <div>
             {specs.map((s, idx) => (
@@ -1208,6 +1310,37 @@ export default function FichaTecnicaGenerator() {
         }
         .field input:focus, .field textarea:focus { outline: none; border-color: var(--amber); }
         .field textarea { resize: vertical; min-height: 64px; }
+        .desc-toolbar { display: flex; gap: 4px; margin-bottom: 6px; }
+        .desc-toolbar button {
+          width: 28px; height: 26px; display: flex; align-items: center; justify-content: center;
+          background: var(--editor-bg); border: 1px solid var(--editor-line); color: var(--editor-text);
+          font-family: var(--font-archivo), sans-serif; font-size: 12px; cursor: pointer; border-radius: 2px;
+        }
+        .desc-toolbar button:hover { border-color: var(--amber); color: var(--amber); }
+        .desc-colors { display: flex; gap: 6px; margin-bottom: 8px; }
+        .desc-colors .swatch {
+          width: 20px; height: 20px; border-radius: 4px; border: 1px solid var(--editor-line);
+          cursor: pointer; padding: 0;
+        }
+        .desc-colors .swatch:hover { border-color: var(--editor-text); transform: scale(1.1); }
+        .desc-colors .swatch-custom {
+          -webkit-appearance: none; appearance: none; background: none; border-style: dashed;
+        }
+        .desc-colors .swatch-custom::-webkit-color-swatch-wrapper { padding: 2px; }
+        .desc-colors .swatch-custom::-webkit-color-swatch { border: none; border-radius: 2px; }
+        .desc-colors .swatch-custom::-moz-color-swatch { border: none; border-radius: 2px; }
+        .desc-editable {
+          width: 100%; min-height: 100px; max-height: 320px; overflow-y: auto; resize: vertical;
+          padding: 8px 10px; background: var(--editor-bg); border: 1px solid var(--editor-line);
+          color: var(--editor-text); font-family: var(--font-archivo), sans-serif; font-size: 13px;
+          line-height: 1.5;
+        }
+        .desc-editable:focus { outline: none; border-color: var(--amber); }
+        .desc-editable:empty::before {
+          content: attr(data-placeholder); color: var(--editor-muted); pointer-events: none;
+        }
+        .desc-editable ul, .desc-editable ol { padding-left: 20px; margin: 4px 0; }
+        .desc-editable div { min-height: 1em; }
         .file-drop {
           border: 1px dashed var(--editor-line); padding: 14px; text-align: center;
           cursor: pointer; font-size: 12px; color: var(--editor-muted);
@@ -1306,7 +1439,15 @@ export default function FichaTecnicaGenerator() {
         .ft-subtitle { font-family: var(--font-mono), monospace; font-size: 12.5px; color: var(--steel); display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 24px; }
         .ft-subtitle b { color: var(--ink); font-weight: 600; }
         .ft-body { display: flex; gap: 28px; margin-bottom: 26px; }
-        .ft-desc { flex: 1.15; font-size: 13.5px; line-height: 1.62; color: #33383e; white-space: pre-line; text-align: justify; text-align-last: left; }
+        .ft-desc { flex: 1.15; font-size: 13.5px; line-height: 1.62; color: #33383e; text-align: justify; text-align-last: left; }
+        .ft-desc p, .ft-desc div { margin: 0 0 8px; }
+        .ft-desc ul, .ft-desc ol { margin: 0 0 10px; padding-left: 18px; }
+        .ft-desc li { margin-bottom: 4px; }
+        .ft-desc p:last-child, .ft-desc div:last-child, .ft-desc ul:last-child, .ft-desc ol:last-child { margin-bottom: 0; }
+        .ft-desc li:last-child { margin-bottom: 0; }
+        .ft-desc b, .ft-desc strong { font-weight: 700; color: var(--ink); }
+        .ft-desc i, .ft-desc em { font-style: italic; }
+        .ft-desc span[style*="background-color"] { padding: 0 2px; border-radius: 2px; }
         .ft-photos { flex: 1; display: grid; gap: 8px; align-content: start; grid-template-columns: 1fr; }
         .ft-photos.n2, .ft-photos.n3, .ft-photos.n4 { grid-template-columns: 1fr 1fr; }
         .ft-photo {

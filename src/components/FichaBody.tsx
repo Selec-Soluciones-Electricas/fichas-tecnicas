@@ -1,3 +1,5 @@
+import { sanitizeDescHtml } from "@/lib/richText";
+
 type FichaBodyProps = {
   titulo: string;
   marca: string;
@@ -28,7 +30,14 @@ export default function FichaBody({
       </div>
 
       <div className="ft-body">
-        <div className="ft-desc">{desc || "La descripción del producto aparecerá aquí."}</div>
+        <div
+          className="ft-desc"
+          dangerouslySetInnerHTML={{
+            __html: desc.replace(/<[^>]+>/g, "").trim()
+              ? sanitizeDescHtml(desc)
+              : "<p>La descripción del producto aparecerá aquí.</p>",
+          }}
+        />
         <div className={photosClass}>
           {nPhotos === 0 ? (
             <div className="ft-photo"><div className="ph">Fotografía<br />del producto</div></div>
