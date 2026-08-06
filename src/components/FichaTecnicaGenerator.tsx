@@ -228,13 +228,147 @@ export default function FichaTecnicaGenerator() {
   const addSpec = () =>
     setSpecs((prev) => [...prev, { k: "", v: "", img: null }]);
   const descRef = useRef<HTMLDivElement>(null);
+  const savedDescRangeRef = useRef<Range | null>(null);
+  // Chrome sometimes wraps each selected line in its own <ul>/<ol> instead of
+  // one shared list (bullets/numbers then don't render as a continuous list).
+  const mergeAdjacentLists = (root: HTMLElement) => {
+    root.querySelectorAll("ul, ol").forEach((list) => {
+      let next = list.nextElementSibling;
+      while (next && next.tagName === list.tagName) {
+        while (next.firstChild) list.appendChild(next.firstChild);
+        const toRemove = next;
+        next = next.nextElementSibling;
+        toRemove.remove();
+      }
+    });
+  };
   const syncDescFromDom = () => {
     const el = descRef.current;
     if (!el) return;
+    mergeAdjacentLists(el);
     if (!(el.textContent || "").trim() && el.innerHTML !== "") {
       el.innerHTML = "";
     }
     setDesc(el.innerHTML);
+  };
+  const saveDescSelection = () => {
+    const el = descRef.current;
+    const sel = window.getSelection();
+    if (el && sel && sel.rangeCount > 0) {
+      const range = sel.getRangeAt(0);
+      if (el.contains(range.commonAncestorContainer)) {
+        savedDescRangeRef.current = range.cloneRange();
+      }
+    }
+  };
+  const restoreDescSelection = () => {
+    const el = descRef.current;
+    if (!el) return;
+    el.focus();
+    const sel = window.getSelection();
+    if (sel && savedDescRangeRef.current) {
+      sel.removeAllRanges();
+      sel.addRange(savedDescRangeRef.current);
+    }
+  };
+  // Wrap any top-level inline content (bare text/b/i/span/br, e.g. an untouched
+  // first line) into a <div> so every line is a normal block-level element.
+  const normalizeDescBlocks = (root: HTMLElement) => {
+    const BLOCK_TAGS = new Set(["DIV", "P", "UL", "OL"]);
+    const originalChildren = Array.from(root.childNodes);
+    let run: Node[] = [];
+    const flushRun = (beforeNode: Node | null) => {
+      if (!run.length) return;
+      const div = document.createElement("div");
+      run.forEach((n) => div.appendChild(n));
+      root.insertBefore(div, beforeNode);
+      run = [];
+    };
+    for (const child of originalChildren) {
+      const isBlock = child.nodeType === 1 && BLOCK_TAGS.has((child as Element).tagName);
+      if (isBlock) {
+        flushRun(child);
+      } else {
+        run.push(child);
+      }
+    }
+    flushRun(null);
+  };
+  const toggleDescList = (ordered: boolean) => {
+    const el = descRef.current;
+    if (!el) return;
+    el.focus();
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    if (!el.contains(range.commonAncestorContainer)) return;
+
+    normalizeDescBlocks(el);
+    if (!el.firstChild) {
+      const emptyDiv = document.createElement("div");
+      emptyDiv.appendChild(document.createElement("br"));
+      el.appendChild(emptyDiv);
+    }
+
+    const getTopLevelAncestor = (node: Node): Node | null => {
+      if (node === el) return el.firstChild;
+      let n: Node | null = node;
+      while (n && n.parentNode !== el) n = n.parentNode;
+      return n;
+    };
+    const startBlock = getTopLevelAncestor(range.startContainer);
+    const endBlock = getTopLevelAncestor(range.endContainer);
+    if (!startBlock || !endBlock) return;
+
+    const children = Array.from(el.childNodes);
+    let startIdx = children.indexOf(startBlock as ChildNode);
+    let endIdx = children.indexOf(endBlock as ChildNode);
+    if (startIdx === -1 || endIdx === -1) return;
+    if (startIdx > endIdx) [startIdx, endIdx] = [endIdx, startIdx];
+
+    const targetTag = ordered ? "OL" : "UL";
+    const selectedBlocks = children.slice(startIdx, endIdx + 1);
+    const referenceNode = children[endIdx + 1] || null;
+
+    const isSingleMatchingList =
+      selectedBlocks.length === 1 &&
+      selectedBlocks[0].nodeType === 1 &&
+      (selectedBlocks[0] as Element).tagName === targetTag;
+
+    if (isSingleMatchingList) {
+      const list = selectedBlocks[0] as HTMLElement;
+      Array.from(list.children).forEach((li) => {
+        const div = document.createElement("div");
+        while (li.firstChild) div.appendChild(li.firstChild);
+        el.insertBefore(div, list);
+      });
+      list.remove();
+    } else {
+      const list = document.createElement(targetTag);
+      selectedBlocks.forEach((block) => {
+        if (block.nodeType === 1 && ["UL", "OL"].includes((block as Element).tagName)) {
+          Array.from((block as Element).children).forEach((li) => {
+            const newLi = document.createElement("li");
+            while (li.firstChild) newLi.appendChild(li.firstChild);
+            list.appendChild(newLi);
+          });
+        } else {
+          const li = document.createElement("li");
+          while (block.firstChild) li.appendChild(block.firstChild);
+          list.appendChild(li);
+        }
+        block.parentNode?.removeChild(block);
+      });
+      el.insertBefore(list, referenceNode);
+    }
+
+    mergeAdjacentLists(el);
+    syncDescFromDom();
+    const newRange = document.createRange();
+    newRange.selectNodeContents(el);
+    newRange.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(newRange);
   };
   const execDescCommand = (command: string, value?: string) => {
     const el = descRef.current;
@@ -265,6 +399,7 @@ export default function FichaTecnicaGenerator() {
     }
     syncDescFromDom();
   };
+  const preventToolbarFocusSteal = (e: React.MouseEvent) => e.preventDefault();
   useEffect(() => {
     const el = descRef.current;
     if (!el) return;
@@ -1130,11 +1265,11 @@ export default function FichaTecnicaGenerator() {
           <div className="field">
             <label>Descripción</label>
             <div className="desc-toolbar">
-              <button type="button" title="Negrita" onClick={() => execDescCommand("bold")}><b>N</b></button>
-              <button type="button" title="Cursiva" onClick={() => execDescCommand("italic")}><i>I</i></button>
-              <button type="button" title="Lista con viñetas" onClick={() => execDescCommand("insertUnorderedList")}>☰</button>
-              <button type="button" title="Lista numerada" onClick={() => execDescCommand("insertOrderedList")}>1.</button>
-              <button type="button" title="Quitar formato" onClick={() => execDescCommand("removeFormat")}>✕</button>
+              <button type="button" title="Negrita" onMouseDown={preventToolbarFocusSteal} onClick={() => execDescCommand("bold")}><b>N</b></button>
+              <button type="button" title="Cursiva" onMouseDown={preventToolbarFocusSteal} onClick={() => execDescCommand("italic")}><i>I</i></button>
+              <button type="button" title="Lista con viñetas" onMouseDown={preventToolbarFocusSteal} onClick={() => toggleDescList(false)}>☰</button>
+              <button type="button" title="Lista numerada" onMouseDown={preventToolbarFocusSteal} onClick={() => toggleDescList(true)}>1.</button>
+              <button type="button" title="Quitar formato" onMouseDown={preventToolbarFocusSteal} onClick={() => execDescCommand("removeFormat")}>✕</button>
             </div>
             <div className="desc-colors">
               {HIGHLIGHT_COLORS.map((c) => (
@@ -1144,20 +1279,28 @@ export default function FichaTecnicaGenerator() {
                   className="swatch"
                   title={`Resaltar en ${c.label}`}
                   style={{ background: `#${c.hex}` }}
+                  onMouseDown={preventToolbarFocusSteal}
                   onClick={() => applyDescHighlight(c.hex)}
                 />
               ))}
-              <input
-                type="color"
+              <label
                 className="swatch swatch-custom"
                 title="Elegir otro color"
-                value={`#${customHighlightColor}`}
-                onChange={(e) => {
-                  const hex = e.target.value.replace("#", "");
-                  setCustomHighlightColor(hex);
-                  applyDescHighlight(hex);
-                }}
-              />
+                style={{ background: `#${customHighlightColor}` }}
+              >
+                <span>+</span>
+                <input
+                  type="color"
+                  value={`#${customHighlightColor}`}
+                  onMouseDown={saveDescSelection}
+                  onChange={(e) => {
+                    const hex = e.target.value.replace("#", "");
+                    setCustomHighlightColor(hex);
+                    restoreDescSelection();
+                    applyDescHighlight(hex);
+                  }}
+                />
+              </label>
             </div>
             <div
               ref={descRef}
@@ -1324,11 +1467,16 @@ export default function FichaTecnicaGenerator() {
         }
         .desc-colors .swatch:hover { border-color: var(--editor-text); transform: scale(1.1); }
         .desc-colors .swatch-custom {
-          -webkit-appearance: none; appearance: none; background: none; border-style: dashed;
+          position: relative; display: inline-flex; align-items: center; justify-content: center;
+          border-style: dashed; border-color: var(--editor-text); overflow: hidden;
         }
-        .desc-colors .swatch-custom::-webkit-color-swatch-wrapper { padding: 2px; }
-        .desc-colors .swatch-custom::-webkit-color-swatch { border: none; border-radius: 2px; }
-        .desc-colors .swatch-custom::-moz-color-swatch { border: none; border-radius: 2px; }
+        .desc-colors .swatch-custom span {
+          font-size: 13px; font-weight: 700; line-height: 1; color: #fff;
+          text-shadow: 0 0 2px rgba(0,0,0,.9), 0 0 1px rgba(0,0,0,.9); pointer-events: none;
+        }
+        .desc-colors .swatch-custom input[type="color"] {
+          position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: none; padding: 0;
+        }
         .desc-editable {
           width: 100%; min-height: 100px; max-height: 320px; overflow-y: auto; resize: vertical;
           padding: 8px 10px; background: var(--editor-bg); border: 1px solid var(--editor-line);
@@ -1340,6 +1488,9 @@ export default function FichaTecnicaGenerator() {
           content: attr(data-placeholder); color: var(--editor-muted); pointer-events: none;
         }
         .desc-editable ul, .desc-editable ol { padding-left: 20px; margin: 4px 0; }
+        .desc-editable ul { list-style: disc outside; }
+        .desc-editable ol { list-style: decimal outside; }
+        .desc-editable li { display: list-item; }
         .desc-editable div { min-height: 1em; }
         .file-drop {
           border: 1px dashed var(--editor-line); padding: 14px; text-align: center;
@@ -1442,6 +1593,9 @@ export default function FichaTecnicaGenerator() {
         .ft-desc { flex: 1.15; font-size: 13.5px; line-height: 1.62; color: #33383e; text-align: justify; text-align-last: left; }
         .ft-desc p, .ft-desc div { margin: 0 0 8px; }
         .ft-desc ul, .ft-desc ol { margin: 0 0 10px; padding-left: 18px; }
+        .ft-desc ul { list-style: disc outside; }
+        .ft-desc ol { list-style: decimal outside; }
+        .ft-desc li { display: list-item; }
         .ft-desc li { margin-bottom: 4px; }
         .ft-desc p:last-child, .ft-desc div:last-child, .ft-desc ul:last-child, .ft-desc ol:last-child { margin-bottom: 0; }
         .ft-desc li:last-child { margin-bottom: 0; }
