@@ -1290,7 +1290,6 @@ export default function FichaTecnicaGenerator() {
           box-shadow: 0 8px 40px rgba(0,0,0,.5); display: flex; flex-direction: column; flex-shrink: 0;
         }
         .sheet-inner { flex: 1; display: flex; flex-direction: column; padding: 48px 52px 36px; overflow: visible; }
-        .ft-foot { margin-top: auto; }
         .ft-head { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 14px; }
         .ft-logo { max-height: 60px; max-width: 220px; object-fit: contain; }
         .ft-logo-text { font-weight: 900; font-size: 26px; letter-spacing: .01em; font-stretch: 110%; }
@@ -1330,10 +1329,10 @@ export default function FichaTecnicaGenerator() {
         table.ft-specs tr:nth-child(odd) td { background: #f7f8f9; }
         .ft-notes {
           font-size: 11px; color: var(--steel); line-height: 1.55;
-          border-left: 3px solid var(--amber); padding-left: 12px; margin-bottom: auto; white-space: pre-line;
+          border-left: 3px solid var(--amber); padding-left: 12px; margin-bottom: 0; white-space: pre-line;
         }
         .ft-foot {
-          margin-top: 30px; padding-top: 12px; border-top: 2px solid var(--ink);
+          margin-top: auto; padding-top: 12px; border-top: 2px solid var(--ink);
           display: flex; justify-content: space-between; align-items: baseline;
           font-size: 10.5px; color: var(--steel); gap: 12px; flex-wrap: wrap;
         }
