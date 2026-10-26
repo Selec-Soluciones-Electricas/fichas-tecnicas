@@ -38,6 +38,7 @@ export default function FichaBody({
               : "<p>La descripción del producto aparecerá aquí.</p>",
           }}
         />
+
         <div className={photosClass}>
           {nPhotos === 0 ? (
             <div className="ft-photo"><div className="ph">Fotografía<br />del producto</div></div>
@@ -48,9 +49,25 @@ export default function FichaBody({
               </div>
             ))
           )}
+
+          {/* Aviso de imagen referencial, debajo del cuadro */}
+          <div
+            style={{
+              gridColumn: "1 / -1",
+              flexBasis: "100%",
+              width: "100%",
+              fontSize: "9px",
+              lineHeight: 1.3,
+              color: "#5c6670",
+              marginTop: "4px",
+              textAlign: "left",
+            }}
+          >
+            Esta foto es referencial y puede no corresponder al producto real.
+            Las características técnicas son las que se indican en la ficha.
+          </div>
         </div>
       </div>
-
       {specsHasContent && (
         <div className="ft-specs-block">
           <div className="ft-specs-title">Características técnicas</div>
