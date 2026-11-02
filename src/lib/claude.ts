@@ -22,7 +22,8 @@ export type FichaIA = {
   contacto?: string;
   specs: Spec[];
   imagenes?: string[];
-  fuente?: string;
+  fuenteUsada?: string;
+  problema?: string;
 };
 
 const API_URL = "https://api.anthropic.com/v1/messages";
@@ -40,6 +41,8 @@ Reglas para la ficha:
 - "specs": especificaciones técnicas reales como pares {k, v} (eléctricas, mecánicas, dimensiones,
   certificaciones, etc.), máximo 15, cada "k" y "v" concisos (menos de 60 caracteres), en español.
 - Traduce al español neutro lo que venga en otro idioma (sin traducir códigos, modelos ni unidades).
+- Nunca escribas en "desc" ni en "notas" explicaciones sobre cómo obtuviste los datos o qué no pudiste leer:
+  eso va solo en "problema". "desc" y "notas" se imprimen tal cual en la ficha que verá el cliente.
 `;
 
 const HERRAMIENTA_FICHA = {
@@ -63,6 +66,11 @@ const HERRAMIENTA_FICHA = {
           required: ["k", "v"],
         },
       },
+      fuenteUsada: { type: "string", description: "URL de donde salieron finalmente los datos" },
+      problema: {
+        type: "string",
+        description: "Solo si no pudiste obtener los datos completos: explicación breve para el usuario. Vacío si todo salió bien.",
+      },
       imagenes: {
         type: "array",
         items: { type: "string" },
@@ -76,13 +84,17 @@ const HERRAMIENTA_FICHA = {
 type Bloque = { type: string; name?: string; input?: unknown; text?: string };
 
 /** Envía la conversación a Claude, siguiendo turnos pausados (pause_turn) de herramientas del servidor. */
-async function llamarClaude(contenido: unknown, conWebFetch: boolean): Promise<FichaIA> {
+async function llamarClaude(contenido: unknown, conWeb: boolean, conBusqueda = conWeb): Promise<FichaIA> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("Falta configurar ANTHROPIC_API_KEY en el servidor.");
 
   const tools: unknown[] = [HERRAMIENTA_FICHA];
-  if (conWebFetch) {
-    tools.unshift({ type: "web_fetch_20250910", name: "web_fetch", max_uses: 4, max_content_tokens: 60000 });
+  if (conWeb) {
+    tools.unshift({ type: "web_fetch_20250910", name: "web_fetch", max_uses: 5, max_content_tokens: 60000 });
+  }
+  if (conWeb && conBusqueda && process.env.AI_WEB_SEARCH !== "off") {
+    // Para tiendas que cargan el producto con JavaScript: busca la página oficial o el datasheet.
+    tools.unshift({ type: "web_search_20250305", name: "web_search", max_uses: 3 });
   }
 
   const mensajes: { role: string; content: unknown }[] = [{ role: "user", content: contenido }];
@@ -108,7 +120,10 @@ async function llamarClaude(contenido: unknown, conWebFetch: boolean): Promise<F
     });
     const data = await resp.json();
     if (!resp.ok) {
-      throw new Error(data?.error?.message || `Error de la API de Claude (${resp.status}).`);
+      const mensaje: string = data?.error?.message || `Error de la API de Claude (${resp.status}).`;
+      // Si la búsqueda web no está habilitada en la organización, se reintenta solo con web_fetch.
+      if (conBusqueda && /web_search/i.test(mensaje)) return llamarClaude(contenido, conWeb, false);
+      throw new Error(mensaje);
     }
     const bloques: Bloque[] = data.content || [];
     const ficha = bloques.find((b) => b.type === "tool_use" && b.name === "registrar_ficha");
@@ -144,6 +159,10 @@ export function fichaDesdeLink(url: string, indicaciones = ""): Promise<FichaIA>
   return llamarClaude(
     `Lee este link del producto y arma su ficha técnica: ${url}
 Si la página tiene un link a la ficha técnica o datasheet en PDF del mismo producto, léelo también para completar las especificaciones.
+Muchas tiendas (ej. pcfactory, falabella, mercadolibre) cargan el producto con JavaScript y web_fetch solo trae
+el encabezado del sitio. Si eso pasa, o la página no trae especificaciones: identifica marca y modelo exacto
+(desde el título, la URL o el código), búscalos con web_search y lee con web_fetch la página oficial del
+fabricante o su datasheet. Prefiere siempre fuentes del fabricante. Indica en "fuenteUsada" de dónde salieron los datos.
 ${REGLAS_FICHA}
 - "imagenes": URLs absolutas de fotos del producto que aparezcan en la página (máximo 4).
 ${indicaciones ? `\nIndicaciones del usuario: ${indicaciones}` : ""}`,
@@ -166,6 +185,8 @@ export function limpiarFicha(f: Partial<FichaIA>): FichaIA {
     desc: txt(f.desc, 2000),
     notas: txt(f.notas, 1500),
     contacto: txt(f.contacto, 200),
+    fuenteUsada: txt(f.fuenteUsada, 1000),
+    problema: txt(f.problema, 500),
     specs,
     imagenes: (Array.isArray(f.imagenes) ? f.imagenes : []).map((u) => txt(u, 1000)).filter(Boolean).slice(0, 4),
   };

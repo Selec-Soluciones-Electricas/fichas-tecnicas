@@ -1189,6 +1189,7 @@ export default function FichaTecnicaGenerator() {
   };
 
   const generarDesdeLink = async () => {
+    
     const url = linkUrl.trim();
     if (!/^https?:\/\//i.test(url)) {
       setAiNotice("Pega un link completo, que empiece con https://");
@@ -1228,6 +1229,8 @@ export default function FichaTecnicaGenerator() {
       const sinFotos = !(Array.isArray(payload.photos) && payload.photos.length);
       setAiNotice(
         "Ficha generada desde el link. Revisa los datos antes de descargar el PDF." +
+          (payload.fuenteUsada && payload.fuenteUsada !== url ? ` Datos tomados de: ${payload.fuenteUsada}.` : "") +
+          (payload.problema ? ` Ojo: ${payload.problema}` : "") +
           (sinFotos ? " No se pudieron descargar fotos: súbelas manualmente." : "")
       );
     } catch (error) {
@@ -1761,8 +1764,7 @@ export default function FichaTecnicaGenerator() {
           .sheet-print-footer .ft-foot { display: flex !important; }
           @page { size: A4; margin: 14mm 15mm 20mm; }
           html, body { overflow: visible !important; height: auto !important; background: #fff !important; }
-          .topbar, .editor { display: none !important; }
-          .main { display: block !important; overflow: visible !important; }
+          .topbar, .editor, .link-bar, .ai-status { display: none !important; }          .main { display: block !important; overflow: visible !important; }
           .preview-zone { padding: 0 !important; background: #fff !important; display: block !important; overflow: visible !important; }
           .sheet { width: 210mm !important; min-height: 297mm !important; height: auto !important; box-shadow: none !important; margin: 0 auto !important; transform: none !important; display: block !important; }
           .sheet-inner { flex: none; display: block; padding: 0; }

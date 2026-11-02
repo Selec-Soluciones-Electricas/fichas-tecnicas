@@ -61,6 +61,13 @@ export async function POST(req: NextRequest) {
     }
 
     const ficha = limpiarFicha(await fichaDesdeLink(destino.toString(), String(indicaciones || "").slice(0, 500)));
+        if (!ficha.desc && !ficha.specs.length) {
+      // No hay nada útil: no se sobrescribe la ficha del usuario, solo se informa el motivo.
+      return NextResponse.json(
+        { error: ficha.problema || "No se encontró información técnica del producto en ese link." },
+        { status: 422 }
+      );
+    }
     const photos = (await Promise.all((ficha.imagenes || []).map(imagenComoDataUrl))).filter(
       (p): p is string => Boolean(p)
     );
