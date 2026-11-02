@@ -79,6 +79,16 @@ export default function FichaTecnicaGenerator() {
   const [lastPdfText, setLastPdfText] = useState("");
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiNotice, setAiNotice] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
+  const [isLinkLoading, setIsLinkLoading] = useState(false);
+  const [usuario, setUsuario] = useState<{ name: string; email: string } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((u) => setUsuario(u && u.email ? u : null))
+      .catch(() => setUsuario(null));
+  }, []);
   const fecha = useMemo(() => {
     const d = new Date();
     return `${d.getDate()} de ${MESES[d.getMonth()]} de ${d.getFullYear()}`;
@@ -1177,6 +1187,57 @@ export default function FichaTecnicaGenerator() {
     }
     e.target.value = "";
   };
+
+  const generarDesdeLink = async () => {
+    const url = linkUrl.trim();
+    if (!/^https?:\/\//i.test(url)) {
+      setAiNotice("Pega un link completo, que empiece con https://");
+      return;
+    }
+    setIsLinkLoading(true);
+    setAiNotice("Leyendo el link con IA… puede tardar hasta un minuto.");
+    try {
+      const response = await fetch("/api/ai-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      if (response.status === 401) {
+        window.location.href = "/api/auth/login";
+        return;
+      }
+      const payload = await response.json();
+      if (!response.ok || payload.error) {
+        throw new Error(payload.error || "No se pudo leer el link.");
+      }
+      applyFichaData({
+        empresa: empresa || EMPRESA_DEFAULT,
+        titulo: payload.titulo || "",
+        marca: payload.marca || "",
+        modelo: payload.modelo || "",
+        docCode: payload.docCode || docCode,
+        desc: payload.desc || "",
+        notas: payload.notas || "",
+        contacto: contacto || CONTACTO_DEFAULT,
+        specs: Array.isArray(payload.specs) && payload.specs.length
+          ? payload.specs.map((s: { k?: string; v?: string }) => ({ k: s.k || "", v: s.v || "", img: null }))
+          : [{ k: "", v: "", img: null }],
+        logo,
+        photos: Array.isArray(payload.photos) && payload.photos.length ? payload.photos : photos,
+      });
+      const sinFotos = !(Array.isArray(payload.photos) && payload.photos.length);
+      setAiNotice(
+        "Ficha generada desde el link. Revisa los datos antes de descargar el PDF." +
+          (sinFotos ? " No se pudieron descargar fotos: súbelas manualmente." : "")
+      );
+    } catch (error) {
+      console.warn(error);
+      setAiNotice(error instanceof Error ? `No se pudo generar desde el link: ${error.message}` : "No se pudo generar desde el link.");
+    } finally {
+      setIsLinkLoading(false);
+    }
+  };
+
   const nPhotos = photos.length;
   return (
     <>
@@ -1193,6 +1254,12 @@ export default function FichaTecnicaGenerator() {
           </div>
         </div>
         <div className="actions">
+                    {usuario ? (
+            <span className="user-badge" title={usuario.email}>
+              {usuario.name}
+              <a href="/api/auth/logout">Cerrar sesión</a>
+            </span>
+          ) : null}
           <label className="btn" style={{ cursor: "pointer" }}>
             Importar datos
             <input type="file" accept=".json,.pdf" onChange={importFile} style={{ display: "none" }} />
@@ -1201,8 +1268,26 @@ export default function FichaTecnicaGenerator() {
           <button className="btn primary" onClick={downloadPdf}>Descargar PDF</button>
         </div>
       </div>
-      {aiNotice ? <div className="ai-status">{aiNotice}</div> : null}
-
+      <div className="link-bar">
+        <label htmlFor="link-producto">Generar con IA desde un link</label>
+        <input
+          id="link-producto"
+          type="url"
+          value={linkUrl}
+          onChange={(e) => setLinkUrl(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !isLinkLoading) generarDesdeLink();
+          }}
+          placeholder="https://… página del fabricante o PDF de la ficha técnica"
+          disabled={isLinkLoading}
+        />
+        <button className="btn primary" onClick={generarDesdeLink} disabled={isLinkLoading || !linkUrl.trim()}>
+          {isLinkLoading ? "Generando…" : "Generar ficha"}
+        </button>
+      </div>
+      {aiNotice || isAiLoading ? (
+        <div className="ai-status">{isAiLoading ? "Analizando el PDF con IA…" : aiNotice}</div>
+      ) : null}
       <div className="main">
         <aside className="editor">
           <h2>Fotografías del producto</h2>
@@ -1432,6 +1517,21 @@ export default function FichaTecnicaGenerator() {
         .btn:hover { background: var(--editor-line); }
         .btn.primary { background: var(--amber); border-color: var(--amber); color: var(--ink); }
         .btn.primary:hover { background: var(--amber-dark); border-color: var(--amber-dark); }
+        .btn:disabled { opacity: .55; cursor: not-allowed; }
+        .user-badge {
+          display: flex; align-items: center; gap: 10px; font-size: 12px;
+          color: var(--editor-muted); margin-right: 6px;
+        }
+        .user-badge a { color: var(--amber); text-decoration: none; font-weight: 600; }
+        .link-bar {
+          display: flex; align-items: center; gap: 10px; padding: 10px 20px;
+          background: var(--editor-panel); border-bottom: 1px solid var(--editor-line); flex-shrink: 0;
+        }
+        .link-bar label { font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--editor-muted); }
+        .link-bar input {
+          flex: 1; min-width: 0; padding: 8px 10px; font-size: 13px;
+          background: var(--editor-bg); color: var(--editor-text); border: 1px solid var(--editor-line);
+        }
         .main { display: flex; flex: 1; overflow: hidden; }
         .editor {
           width: 380px; flex-shrink: 0; overflow-y: auto;

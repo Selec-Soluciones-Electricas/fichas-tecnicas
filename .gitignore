@@ -13,6 +13,10 @@
 # testing
 /coverage
 
+// Herramienta interna: que no aparezca en buscadores
+robots: { index: false, follow: false },
+
+
 # next.js
 /.next/
 /out/

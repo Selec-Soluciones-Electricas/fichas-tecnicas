@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-
+import { fichaDesdeTexto, limpiarFicha } from "@/lib/claude";
 type Spec = { k: string; v: string };
 
 const RESPONSE_SCHEMA = `{
@@ -93,6 +93,16 @@ export async function POST(req: NextRequest) {
     }
 
     const fallback = buildFallbackExtraction(text);
+    
+    // Claude (si está configurado): es el proveedor principal.
+    if (process.env.ANTHROPIC_API_KEY) {
+      const ficha = limpiarFicha(await fichaDesdeTexto(text, currentData));
+      return NextResponse.json({
+        ...fallback,
+        ...Object.fromEntries(Object.entries(ficha).filter(([, v]) => v !== "" && !(Array.isArray(v) && !v.length))),
+        specs: ficha.specs,
+      });
+    }
     const apiKey = process.env.OPENAI_API_KEY;
     const ollamaModel = process.env.OLLAMA_MODEL || "llama3.2";
     const ollamaBaseUrl = (process.env.OLLAMA_HOST || "http://127.0.0.1:11434").replace(/\/$/, "");
