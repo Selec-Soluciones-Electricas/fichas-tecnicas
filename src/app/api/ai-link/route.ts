@@ -27,6 +27,19 @@ function urlPublicaSegura(texto: string): URL | null {
   }
 }
 
+
+/** Quita parámetros de seguimiento (utm, gclid, etc.): alargan el link y algunas tiendas no lo abren. */
+function limpiarLink(url: URL): URL {
+  const limpio = new URL(url.toString());
+  for (const clave of [...limpio.searchParams.keys()]) {
+    if (/^(utm_|gad_|gclid|gbraid|wbraid|fbclid|msclkid|mc_|_ga|srsltid|campaignid|adgroupid|keyword)/i.test(clave)) {
+      limpio.searchParams.delete(clave);
+    }
+  }
+  limpio.hash = "";
+  return limpio;
+}
+
 /** Descarga la imagen y la devuelve como data URL (así queda dentro del PDF exportado). */
 async function imagenComoDataUrl(direccion: string): Promise<string | null> {
   const url = urlPublicaSegura(direccion);
@@ -55,11 +68,11 @@ async function imagenComoDataUrl(direccion: string): Promise<string | null> {
 export async function POST(req: NextRequest) {
   try {
     const { url, indicaciones } = await req.json();
-    const destino = urlPublicaSegura(String(url || "").trim());
-    if (!destino) {
+    const original = urlPublicaSegura(String(url || "").trim());
+    if (!original) {
       return NextResponse.json({ error: "Ingresa un link válido (https://...)." }, { status: 400 });
     }
-
+    const destino = limpiarLink(original);
     const ficha = limpiarFicha(await fichaDesdeLink(destino.toString(), String(indicaciones || "").slice(0, 500)));
         if (!ficha.desc && !ficha.specs.length) {
       // No hay nada útil: no se sobrescribe la ficha del usuario, solo se informa el motivo.

@@ -183,10 +183,10 @@ export function limpiarFicha(f: Partial<FichaIA>): FichaIA {
     modelo: txt(f.modelo, 120),
     docCode: txt(f.docCode, 60),
     desc: txt(f.desc, 2000),
-    notas: txt(f.notas, 1500),
-    contacto: txt(f.contacto, 200),
+    // Las notas las escribe el usuario; la IA solo las completa si AI_NOTAS=on
+    notas: process.env.AI_NOTAS === "on" ? txt(f.notas, 1500) : "",    contacto: txt(f.contacto, 200),
     fuenteUsada: txt(f.fuenteUsada, 1000),
-    problema: txt(f.problema, 500),
+    problema: txt(f.problema, 250),
     specs,
     imagenes: (Array.isArray(f.imagenes) ? f.imagenes : []).map((u) => txt(u, 1000)).filter(Boolean).slice(0, 4),
   };
