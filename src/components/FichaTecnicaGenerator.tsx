@@ -793,7 +793,7 @@ export default function FichaTecnicaGenerator() {
     ctx.putImageData(imageData, 0, 0);
     return canvas.toDataURL("image/png");
   };
-  const extractPdfPhotos = async (buffer: ArrayBuffer): Promise<string[]> => {
+  const extractPdfPhotos = async (buffer: ArrayBuffer, maxFotos = 6): Promise<string[]> => {
     const pdfjsLib: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
     pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
     const stableBuffer = buffer.slice(0);
@@ -819,7 +819,7 @@ export default function FichaTecnicaGenerator() {
     const photos: string[] = [];
     const seen = new Set<string>();
     for (const candidate of candidates) {
-      if (photos.length >= 6) break;
+      if (photos.length >= maxFotos) break;
       const key = `${candidate.width}x${candidate.height}`;
       if (seen.has(key)) continue;
       try {
@@ -1112,11 +1112,13 @@ export default function FichaTecnicaGenerator() {
       setIsAiLoading(false);
     }
   };
-  const importPdfFile = async (f: File) => {
+  // conFotos=false: respaldo cuando la IA no pudo revisar las imágenes; así no se cuelan
+  // logos de marcas en la ficha (se mantienen las fotos que ya tenía el usuario).
+  const importPdfFile = async (f: File, conFotos = true) => {
     try {
       const buffer = await readArrayBuffer(f);
       const rawText = await parsePdfText(buffer);
-      const extractedPhotos = await extractPdfPhotos(buffer);
+      const extractedPhotos = conFotos ? await extractPdfPhotos(buffer) : photos;
       setLastPdfText(rawText);
       const lines = rawText
         .split(/\r?\n/)
@@ -1178,10 +1180,30 @@ export default function FichaTecnicaGenerator() {
       alert("No se pudo leer el PDF. Asegúrate de que sea una ficha técnica válida.");
     }
   };
+  /** Reduce una imagen (data URL) a JPEG de máx. `lado` px, para enviarla a la IA sin pesar mucho. */
+  const miniatura = (dataUrl: string, lado = 640): Promise<string | null> =>
+    new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const escala = Math.min(1, lado / Math.max(img.naturalWidth, img.naturalHeight));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(img.naturalWidth * escala));
+        canvas.height = Math.max(1, Math.round(img.naturalHeight * escala));
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return resolve(null);
+        ctx.fillStyle = "#ffffff"; // fondo blanco para PNG transparentes
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", 0.85));
+      };
+      img.onerror = () => resolve(null);
+      img.src = dataUrl;
+    });
   /**
    * Genera la ficha enviando el PDF completo a Claude (/api/ai-pdf): lee texto, tablas,
-   * imágenes y PDFs escaneados. Las fotos del producto se extraen aquí, con pdf.js.
-   * Si la IA falla (PDF muy pesado, error de red), se usa la extracción por texto anterior.
+   * imágenes y PDFs escaneados. Las imágenes del PDF se extraen aquí (pdf.js) y se envían
+   * como candidatas: Claude indica cuáles son fotos del producto y se descartan logos y marcas.
+   * Si la IA falla (PDF muy pesado, error de red), se usa la extracción por texto, sin fotos.
    */
   const generarDesdePdf = async (f: File) => {
     if (!(f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"))) {
@@ -1189,18 +1211,22 @@ export default function FichaTecnicaGenerator() {
       return;
     }
     if (f.size > 20 * 1024 * 1024) {
-      setAiNotice(`El PDF pesa ${(f.size / 1024 / 1024).toFixed(1)} MB; el máximo es 20 MB. Se usará la lectura por texto.`);
-      await importPdfFile(f);
+      setAiNotice(`El PDF pesa ${(f.size / 1024 / 1024).toFixed(1)} MB; el máximo es 20 MB. Se usó la lectura por texto (sin fotos).`);
+      await importPdfFile(f, false);
       return;
     }
     setIsPdfLoading(true);
     setAiNotice(`Analizando "${f.name}" con IA… puede tardar hasta un minuto.`);
     try {
-      const fotosPromesa = readArrayBuffer(f)
-        .then((buffer) => extractPdfPhotos(buffer))
+      const candidatas = await readArrayBuffer(f)
+        .then((buffer) => extractPdfPhotos(buffer, 10))
         .catch(() => [] as string[]);
       const form = new FormData();
       form.append("archivo", f);
+      // Se envía una miniatura por candidata, en el mismo orden (la IA responde con su número)
+      const miniaturas = await Promise.all(candidatas.map((c) => miniatura(c)));
+      miniaturas.forEach((m) => form.append("candidatas", m || ""));
+
       const response = await fetch("/api/ai-pdf", { method: "POST", body: form });
       if (response.status === 401) {
         window.location.href = "/api/auth/login";
@@ -1215,7 +1241,10 @@ export default function FichaTecnicaGenerator() {
       if (!response.ok || payload.error) {
         throw new Error(payload.error || "No se pudo analizar el PDF.");
       }
-      const fotosPdf = await fotosPromesa;
+      // Solo las imágenes que la IA marcó como fotos del producto (nunca logos de marcas)
+      const fotosPdf: string[] = (Array.isArray(payload.fotosProducto) ? payload.fotosProducto : [])
+        .map((n: number) => candidatas[n - 1])
+        .filter((foto: string | undefined): foto is string => Boolean(foto));
       applyFichaData({
         empresa: empresa || EMPRESA_DEFAULT,
         titulo: payload.titulo || "",
@@ -1231,18 +1260,23 @@ export default function FichaTecnicaGenerator() {
         logo,
         photos: fotosPdf.length ? fotosPdf : photos,
       });
+      const descartadas = candidatas.length - fotosPdf.length;
       setAiNotice(
         "Ficha generada desde el PDF. Revisa los datos antes de descargar." +
           (payload.problema ? ` Ojo: ${payload.problema}` : "") +
-          (fotosPdf.length ? "" : " No se encontraron fotos en el PDF: súbelas manualmente.")
+          (fotosPdf.length
+            ? descartadas > 0
+              ? ` Se descartaron ${descartadas} imagen(es) que no son del producto (logos, planos, etc.).`
+              : ""
+            : " No se encontraron fotos del producto en el PDF: súbelas manualmente.")
       );
     } catch (error) {
       console.warn(error);
       setAiNotice(
         (error instanceof Error ? `La IA no pudo leer el PDF (${error.message}). ` : "La IA no pudo leer el PDF. ") +
-          "Se usó la lectura por texto: revisa los datos."
+          "Se usó la lectura por texto, sin fotos: revisa los datos y sube las fotos manualmente."
       );
-      await importPdfFile(f);
+      await importPdfFile(f, false);
     } finally {
       setIsPdfLoading(false);
     }

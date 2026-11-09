@@ -24,6 +24,8 @@ export type FichaIA = {
   imagenes?: string[];
   fuenteUsada?: string;
   problema?: string;
+  /** Solo PDF: números (1, 2, 3…) de las imágenes candidatas que son fotos del producto. */
+  fotosProducto?: number[];
 };
 
 const API_URL = "https://api.anthropic.com/v1/messages";
@@ -67,6 +69,13 @@ const HERRAMIENTA_FICHA = {
         },
       },
       fuenteUsada: { type: "string", description: "URL de donde salieron finalmente los datos" },
+      fotosProducto: {
+        type: "array",
+        items: { type: "integer" },
+        description:
+          "Solo si se entregan imágenes candidatas numeradas: números de las que son FOTOS DEL PRODUCTO. " +
+          "Nunca logos de marcas, sellos, certificaciones, íconos, banners, planos ni dibujos de dimensiones.",
+      },
       problema: {
         type: "string",
         description: "Solo si no pudiste obtener los datos completos: explicación breve para el usuario. Vacío si todo salió bien.",
@@ -175,14 +184,27 @@ ${indicaciones ? `\nIndicaciones del usuario: ${indicaciones}` : ""}`,
  * Ficha a partir de un archivo PDF subido por el usuario (base64, sin el prefijo data:).
  * Claude recibe el PDF completo (texto e imágenes de cada página), así que también
  * lee tablas, PDFs escaneados y fichas en otro idioma.
+ *
+ * `candidatas`: imágenes extraídas del PDF en el navegador (data URLs reducidas). Claude
+ * indica en "fotosProducto" cuáles son fotos del producto, para descartar logos de marcas.
  */
-export function fichaDesdePdf(pdfBase64: string, nombreArchivo = "", indicaciones = ""): Promise<FichaIA> {
+export function fichaDesdePdf(
+  pdfBase64: string,
+  nombreArchivo = "",
+  indicaciones = "",
+  candidatas: { media_type: string; data: string }[] = []
+): Promise<FichaIA> {
+  const bloquesImagenes = candidatas.flatMap((img, i) => [
+    { type: "text", text: `Imagen candidata ${i + 1}:` },
+    { type: "image", source: { type: "base64", media_type: img.media_type, data: img.data } },
+  ]);
   return llamarClaude(
     [
       {
         type: "document",
         source: { type: "base64", media_type: "application/pdf", data: pdfBase64 },
       },
+      ...bloquesImagenes,
       {
         type: "text",
         text: `Este PDF${nombreArchivo ? ` ("${nombreArchivo}")` : ""} es la ficha técnica, catálogo o datasheet de un producto.
@@ -190,14 +212,23 @@ Arma su ficha técnica con lo que dice el documento (incluye tablas e imágenes 
 Si el PDF trae varios modelos o variantes, usa el modelo principal o el que indique el usuario, y pon en "specs" solo los valores de ese modelo.
 Si el documento no es de un producto o no se puede leer, deja los campos vacíos y explica el motivo en "problema".
 ${REGLAS_FICHA}
-- "imagenes": déjalo vacío (las fotos se extraen del PDF por separado).
+- "imagenes": déjalo vacío.
+${
+  candidatas.length
+    ? `- "fotosProducto": arriba van ${candidatas.length} imágenes candidatas extraídas del PDF, numeradas desde 1.
+  Devuelve SOLO los números de las que son fotografías o renders del PRODUCTO de la ficha (máximo 4, la mejor primero).
+  Descarta siempre: logos o marcas (del fabricante, del distribuidor o de cualquier empresa), sellos y certificaciones
+  (CE, UL, ISO, etc.), íconos, banners, fotos de personas o ambientes, planos y dibujos de dimensiones o de conexión,
+  tablas y fotos de otros productos. La ficha la publica SELEC y nunca debe mostrar una marca externa.
+  Si ninguna es una foto del producto, devuelve una lista vacía.`
+    : ""
+}
 ${indicaciones ? `\nIndicaciones del usuario: ${indicaciones}` : ""}`,
       },
     ],
     false
   );
 }
-
 
 /** Deja la ficha con la forma y los largos que espera el generador. */
 export function limpiarFicha(f: Partial<FichaIA>): FichaIA {
@@ -213,10 +244,15 @@ export function limpiarFicha(f: Partial<FichaIA>): FichaIA {
     docCode: txt(f.docCode, 60),
     desc: txt(f.desc, 2000),
     // Las notas las escribe el usuario; la IA solo las completa si AI_NOTAS=on
-    notas: process.env.AI_NOTAS === "on" ? txt(f.notas, 1500) : "",    contacto: txt(f.contacto, 200),
+    notas: process.env.AI_NOTAS === "on" ? txt(f.notas, 1500) : "",
+    contacto: txt(f.contacto, 200),
     fuenteUsada: txt(f.fuenteUsada, 1000),
     problema: txt(f.problema, 250),
     specs,
     imagenes: (Array.isArray(f.imagenes) ? f.imagenes : []).map((u) => txt(u, 1000)).filter(Boolean).slice(0, 4),
+    fotosProducto: (Array.isArray(f.fotosProducto) ? f.fotosProducto : [])
+      .map((n) => Number(n))
+      .filter((n, i, arr) => Number.isInteger(n) && n > 0 && arr.indexOf(n) === i)
+      .slice(0, 4),
   };
 }

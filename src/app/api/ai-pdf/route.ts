@@ -5,11 +5,22 @@ export const maxDuration = 120;
 
 /** Tamaño máximo del PDF. La API de Claude acepta hasta 32 MB por solicitud (el PDF va en base64, +33 %). */
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
+/** Imágenes candidatas que manda el navegador para que Claude elija las fotos del producto. */
+const MAX_CANDIDATAS = 10;
+const MAX_CANDIDATA_BYTES = 1.5 * 1024 * 1024;
+
+/** "data:image/jpeg;base64,...." -> { media_type, data }, solo formatos que acepta Claude. */
+function leerCandidata(valor: FormDataEntryValue): { media_type: string; data: string } | null {
+  const m = String(valor).match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/);
+  if (!m || m[2].length * 0.75 > MAX_CANDIDATA_BYTES) return null;
+  return { media_type: m[1], data: m[2] };
+}
 
 /**
- * POST multipart/form-data { archivo: PDF, indicaciones? }
+ * POST multipart/form-data { archivo: PDF, candidatas?: data URL (varias), indicaciones? }
  * Claude lee el PDF completo (texto e imágenes) y devuelve los datos de la ficha.
- * Las fotos del producto las extrae el navegador del mismo PDF (pdf.js).
+ * Las imágenes las extrae el navegador del PDF (pdf.js) y las manda como "candidatas";
+ * Claude devuelve en "fotosProducto" cuáles son fotos del producto (descarta logos y marcas).
  */
 export async function POST(req: NextRequest) {
   try {
@@ -33,7 +44,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "El archivo no es un PDF válido." }, { status: 400 });
     }
 
-    const ficha = limpiarFicha(await fichaDesdePdf(buffer.toString("base64"), archivo.name.slice(0, 120), indicaciones));
+    // Se conserva la posición original de cada candidata (la usa el navegador para elegir las fotos)
+    const entradas = form.getAll("candidatas").slice(0, MAX_CANDIDATAS);
+    const validas = entradas
+      .map((v, i) => ({ img: leerCandidata(v), numeroOriginal: i + 1 }))
+      .filter((c): c is { img: { media_type: string; data: string }; numeroOriginal: number } => c.img !== null);
+
+    const ficha = limpiarFicha(
+      await fichaDesdePdf(buffer.toString("base64"), archivo.name.slice(0, 120), indicaciones, validas.map((c) => c.img))
+    );
+    // Claude numera las válidas desde 1: se traducen al número original que envió el navegador
+    ficha.fotosProducto = (ficha.fotosProducto || [])
+      .map((n) => validas[n - 1]?.numeroOriginal)
+      .filter((n): n is number => typeof n === "number");
     if (!ficha.desc && !ficha.specs.length) {
       // Nada útil: no se sobrescribe la ficha del usuario, solo se informa el motivo
       return NextResponse.json(
