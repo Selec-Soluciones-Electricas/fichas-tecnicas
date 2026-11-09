@@ -170,6 +170,35 @@ ${indicaciones ? `\nIndicaciones del usuario: ${indicaciones}` : ""}`,
   );
 }
 
+
+/**
+ * Ficha a partir de un archivo PDF subido por el usuario (base64, sin el prefijo data:).
+ * Claude recibe el PDF completo (texto e imágenes de cada página), así que también
+ * lee tablas, PDFs escaneados y fichas en otro idioma.
+ */
+export function fichaDesdePdf(pdfBase64: string, nombreArchivo = "", indicaciones = ""): Promise<FichaIA> {
+  return llamarClaude(
+    [
+      {
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: pdfBase64 },
+      },
+      {
+        type: "text",
+        text: `Este PDF${nombreArchivo ? ` ("${nombreArchivo}")` : ""} es la ficha técnica, catálogo o datasheet de un producto.
+Arma su ficha técnica con lo que dice el documento (incluye tablas e imágenes con texto).
+Si el PDF trae varios modelos o variantes, usa el modelo principal o el que indique el usuario, y pon en "specs" solo los valores de ese modelo.
+Si el documento no es de un producto o no se puede leer, deja los campos vacíos y explica el motivo en "problema".
+${REGLAS_FICHA}
+- "imagenes": déjalo vacío (las fotos se extraen del PDF por separado).
+${indicaciones ? `\nIndicaciones del usuario: ${indicaciones}` : ""}`,
+      },
+    ],
+    false
+  );
+}
+
+
 /** Deja la ficha con la forma y los largos que espera el generador. */
 export function limpiarFicha(f: Partial<FichaIA>): FichaIA {
   const txt = (v: unknown, max: number) => String(v ?? "").trim().slice(0, max);

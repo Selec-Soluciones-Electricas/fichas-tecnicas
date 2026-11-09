@@ -81,6 +81,7 @@ export default function FichaTecnicaGenerator() {
   const [aiNotice, setAiNotice] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
   const [isLinkLoading, setIsLinkLoading] = useState(false);
+  const [isPdfLoading, setIsPdfLoading] = useState(false);
   const [usuario, setUsuario] = useState<{ name: string; email: string } | null>(null);
 
   useEffect(() => {
@@ -1177,11 +1178,85 @@ export default function FichaTecnicaGenerator() {
       alert("No se pudo leer el PDF. Asegúrate de que sea una ficha técnica válida.");
     }
   };
+  /**
+   * Genera la ficha enviando el PDF completo a Claude (/api/ai-pdf): lee texto, tablas,
+   * imágenes y PDFs escaneados. Las fotos del producto se extraen aquí, con pdf.js.
+   * Si la IA falla (PDF muy pesado, error de red), se usa la extracción por texto anterior.
+   */
+  const generarDesdePdf = async (f: File) => {
+    if (!(f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"))) {
+      setAiNotice("El archivo debe ser un PDF.");
+      return;
+    }
+    if (f.size > 20 * 1024 * 1024) {
+      setAiNotice(`El PDF pesa ${(f.size / 1024 / 1024).toFixed(1)} MB; el máximo es 20 MB. Se usará la lectura por texto.`);
+      await importPdfFile(f);
+      return;
+    }
+    setIsPdfLoading(true);
+    setAiNotice(`Analizando "${f.name}" con IA… puede tardar hasta un minuto.`);
+    try {
+      const fotosPromesa = readArrayBuffer(f)
+        .then((buffer) => extractPdfPhotos(buffer))
+        .catch(() => [] as string[]);
+      const form = new FormData();
+      form.append("archivo", f);
+      const response = await fetch("/api/ai-pdf", { method: "POST", body: form });
+      if (response.status === 401) {
+        window.location.href = "/api/auth/login";
+        return;
+      }
+      const payload = await response.json().catch(() => ({ error: `Error ${response.status} del servidor.` }));
+      if (response.status === 422) {
+        // La IA leyó el PDF pero no encontró un producto: no se toca la ficha actual
+        setAiNotice(`No se generó la ficha: ${payload.error}`);
+        return;
+      }
+      if (!response.ok || payload.error) {
+        throw new Error(payload.error || "No se pudo analizar el PDF.");
+      }
+      const fotosPdf = await fotosPromesa;
+      applyFichaData({
+        empresa: empresa || EMPRESA_DEFAULT,
+        titulo: payload.titulo || "",
+        marca: payload.marca || "",
+        modelo: payload.modelo || "",
+        docCode: payload.docCode || docCode,
+        desc: payload.desc || "",
+        notas: payload.notas || "",
+        contacto: contacto || CONTACTO_DEFAULT,
+        specs: Array.isArray(payload.specs) && payload.specs.length
+          ? payload.specs.map((s: { k?: string; v?: string }) => ({ k: s.k || "", v: s.v || "", img: null }))
+          : [{ k: "", v: "", img: null }],
+        logo,
+        photos: fotosPdf.length ? fotosPdf : photos,
+      });
+      setAiNotice(
+        "Ficha generada desde el PDF. Revisa los datos antes de descargar." +
+          (payload.problema ? ` Ojo: ${payload.problema}` : "") +
+          (fotosPdf.length ? "" : " No se encontraron fotos en el PDF: súbelas manualmente.")
+      );
+    } catch (error) {
+      console.warn(error);
+      setAiNotice(
+        (error instanceof Error ? `La IA no pudo leer el PDF (${error.message}). ` : "La IA no pudo leer el PDF. ") +
+          "Se usó la lectura por texto: revisa los datos."
+      );
+      await importPdfFile(f);
+    } finally {
+      setIsPdfLoading(false);
+    }
+  };
+  const subirPdf = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (f) await generarDesdePdf(f);
+  };
   const importFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
     if (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")) {
-      await importPdfFile(f);
+      await generarDesdePdf(f);
     } else {
       importJsonFile(f);
     }
@@ -1272,7 +1347,7 @@ export default function FichaTecnicaGenerator() {
         </div>
       </div>
       <div className="link-bar">
-        <label htmlFor="link-producto">Generar con IA desde un link</label>
+        <label htmlFor="link-producto">Generar con IA desde un link o un PDF</label>
         <input
           id="link-producto"
           type="url"
@@ -1282,11 +1357,26 @@ export default function FichaTecnicaGenerator() {
             if (e.key === "Enter" && !isLinkLoading) generarDesdeLink();
           }}
           placeholder="https://… página del fabricante o PDF de la ficha técnica"
-          disabled={isLinkLoading}
+          disabled={isLinkLoading || isPdfLoading}
         />
-        <button className="btn primary" onClick={generarDesdeLink} disabled={isLinkLoading || !linkUrl.trim()}>
+        <button className="btn primary" onClick={generarDesdeLink} disabled={isLinkLoading || isPdfLoading || !linkUrl.trim()}>
           {isLinkLoading ? "Generando…" : "Generar ficha"}
         </button>
+        <span className="link-bar-o">o</span>
+        <label
+          className={`btn${isLinkLoading || isPdfLoading ? " disabled" : ""}`}
+          style={{ cursor: isLinkLoading || isPdfLoading ? "not-allowed" : "pointer" }}
+          title="Sube la ficha técnica, catálogo o datasheet del producto en PDF (máx. 20 MB)"
+        >
+          {isPdfLoading ? "Analizando PDF…" : "Subir PDF"}
+          <input
+            type="file"
+            accept="application/pdf,.pdf"
+            onChange={subirPdf}
+            disabled={isLinkLoading || isPdfLoading}
+            style={{ display: "none" }}
+          />
+        </label>
       </div>
       {aiNotice || isAiLoading ? (
         <div className="ai-status">{isAiLoading ? "Analizando el PDF con IA…" : aiNotice}</div>
@@ -1531,6 +1621,9 @@ export default function FichaTecnicaGenerator() {
           background: var(--editor-panel); border-bottom: 1px solid var(--editor-line); flex-shrink: 0;
         }
         .link-bar label { font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--editor-muted); }
+        .link-bar label.btn { font-size: 13px; font-weight: 600; color: var(--editor-text); }
+        .link-bar label.btn.disabled { opacity: .55; }
+        .link-bar-o { font-size: 12px; color: var(--editor-muted); }
         .link-bar input {
           flex: 1; min-width: 0; padding: 8px 10px; font-size: 13px;
           background: var(--editor-bg); color: var(--editor-text); border: 1px solid var(--editor-line);
